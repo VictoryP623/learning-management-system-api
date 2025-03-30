@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <title>Xác nhận email</title>
+</head>
+
+<body>
+    <p>Dear <span th:text="${email}">email_placeholder</span>,</p>
+    <p>Để xác thực địa chỉ email đã đăng ký vui lòng ấn <a th:href="${verificationLink}">vào đây</a> </p>
+    <p>Trân trọng,</p>
+    <p><strong>Đội ngũ hỗ trợ</strong></p>
+</body>
+
+</html>

@@ -2,7 +2,6 @@ package com.example.learning_management_system_api.controller;
 
 import com.example.learning_management_system_api.dto.response.LessonResourceDto;
 import com.example.learning_management_system_api.dto.response.PageDto;
-import com.example.learning_management_system_api.entity.LessonResource;
 import com.example.learning_management_system_api.service.LessonResourceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +11,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/lesson-resources")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class LessonResourceController {
 
     private final LessonResourceService lessonResourceService;
@@ -20,11 +20,12 @@ public class LessonResourceController {
         this.lessonResourceService = lessonResourceService;
     }
 
-    @PostMapping("")
-    @PreAuthorize("hasRole('ROLE_Instructor')")
-    public ResponseEntity<LessonResourceDto> uploadResource(@RequestParam("file") MultipartFile multipartFile,
-                                                            @RequestParam("lessonId") Long lessonId,
-                                                            @RequestParam("resourceName") String resourceName){
+  @PostMapping("")
+  @PreAuthorize("hasRole('ROLE_Instructor')")
+  public ResponseEntity<LessonResourceDto> uploadResource(
+      @RequestParam("file") MultipartFile multipartFile,
+      @RequestParam("lessonId") Long lessonId,
+      @RequestParam("resourceName") String resourceName) {
         return new ResponseEntity<>(lessonResourceService.addLessonResource(multipartFile, lessonId, resourceName), HttpStatus.OK);
     }
 
@@ -35,11 +36,12 @@ public class LessonResourceController {
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
-    @GetMapping("")
-    @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
-    public ResponseEntity<PageDto> getAllLessonResources(@RequestParam(defaultValue = "0") int page,
-                                                         @RequestParam(defaultValue = "10") int limit,
-                                                         @RequestParam Long lessonId){
+  @GetMapping("")
+  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  public ResponseEntity<PageDto> getAllLessonResources(
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "10") int limit,
+      @RequestParam Long lessonId) {
         return new ResponseEntity<>(lessonResourceService.getAllLessonResource(lessonId, page, limit), HttpStatus.OK);
     }
 

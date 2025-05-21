@@ -12,7 +12,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 public class CustomUserDetails implements UserDetails, Principal {
 
   private User user;
-  
+
   public CustomUserDetails(User user) {
     this.user = user;
   }
@@ -24,6 +24,10 @@ public class CustomUserDetails implements UserDetails, Principal {
 
   public Long getUserId() {
     return user.getId();
+  }
+
+  public User getUser() {
+    return this.user;
   }
 
   @Override

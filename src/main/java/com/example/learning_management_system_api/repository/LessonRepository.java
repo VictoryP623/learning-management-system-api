@@ -8,4 +8,6 @@ public interface LessonRepository extends JpaRepository<Lesson, Long> {
   boolean existsByNameAndCourseId(String name, Long courseId);
 
   List<Lesson> findByCourse_IdAndNameContaining(Long courseId, String name);
+
+  boolean existsByNameAndCourseIdAndIdNot(String name, Long courseId, Long id);
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/follows")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class FollowController {
 
   @Autowired private IFollowService followService;

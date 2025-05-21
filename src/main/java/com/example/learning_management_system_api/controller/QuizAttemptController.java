@@ -1,24 +1,21 @@
 package com.example.learning_management_system_api.controller;
 
 import com.example.learning_management_system_api.dto.request.QuizAnswerDto;
-import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.QuizAttemptResponseDto;
 import com.example.learning_management_system_api.entity.QuizAttempt;
-import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.service.QuizAttemptService;
-import com.example.learning_management_system_api.service.QuizService;
 import jakarta.validation.Valid;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-
 @RestController
 @RequestMapping("/api/quizAttempts")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class QuizAttemptController {
     private final QuizAttemptService quizAttemptService;
 

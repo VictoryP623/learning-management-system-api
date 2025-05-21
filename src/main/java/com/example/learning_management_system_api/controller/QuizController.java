@@ -3,19 +3,16 @@ package com.example.learning_management_system_api.controller;
 import com.example.learning_management_system_api.dto.request.QuizRequestDto;
 import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.QuizResponseDto;
-import com.example.learning_management_system_api.entity.Quiz;
 import com.example.learning_management_system_api.service.QuizService;
 import jakarta.validation.Valid;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/quizzes")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class QuizController {
 
     private final QuizService quizService;

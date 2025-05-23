@@ -3,9 +3,7 @@ package com.example.learning_management_system_api.controller;
 import com.example.learning_management_system_api.config.CustomUserDetails;
 import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.PurchaseResponseDto;
-import com.example.learning_management_system_api.entity.Purchase;
 import com.example.learning_management_system_api.service.PurchaseService;
-
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -16,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("api/purchases")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class PurchaseController {
 
   private final PurchaseService purchaseService;

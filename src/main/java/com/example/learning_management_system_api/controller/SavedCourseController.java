@@ -8,9 +8,7 @@ import com.example.learning_management_system_api.entity.Student;
 import com.example.learning_management_system_api.service.ISaveCourseService;
 import com.example.learning_management_system_api.service.IStudentService;
 import jakarta.validation.Valid;
-
 import java.util.Optional;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/saved-courses")
+//@CrossOrigin(origins = "http://localhost:3000")
 public class SavedCourseController {
 
     @Autowired
@@ -62,7 +61,7 @@ public class SavedCourseController {
             Long id = userDetails.getUserId();
             Optional<Student> student = studentService.getStudentById(id);
             if (student.isEmpty()) {
-                return ResponseEntity.badRequest().body("Student not found for the logged-in user.");
+        return ResponseEntity.badRequest().body("Student not found for the logged-in user.");
             }
             // Tạo đối tượng SavedCourse và gán thông tin
             SavedCourse savedCourse = new SavedCourse();
@@ -73,7 +72,7 @@ public class SavedCourseController {
             savedCourseService.deleteCourse(savedCourse);
             return ResponseEntity.ok("Course deleted successfully!");
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Failed to delete the course: " + e.getMessage());
+      return ResponseEntity.badRequest().body("Failed to delete the course: " + e.getMessage());
         }
     }
 
@@ -88,7 +87,7 @@ public class SavedCourseController {
 
             Optional<Student> student = studentService.getStudentById(id);
             if (student.isEmpty()) {
-                return ResponseEntity.badRequest().body("Student not found for the logged-in user.");
+        return ResponseEntity.badRequest().body("Student not found for the logged-in user.");
             }
 
             Pageable pageable = PageRequest.of(page, size);

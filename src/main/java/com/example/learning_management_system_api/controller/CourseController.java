@@ -1,5 +1,6 @@
 package com.example.learning_management_system_api.controller;
 
+import com.example.learning_management_system_api.config.CustomUserDetails;
 import com.example.learning_management_system_api.dto.mapper.CourseMapper;
 import com.example.learning_management_system_api.dto.request.CourseRequestDto;
 import com.example.learning_management_system_api.dto.response.CourseResponseDto;
@@ -9,33 +10,40 @@ import com.example.learning_management_system_api.service.ICourseService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/courses")
+// @CrossOrigin(origins = "http://localhost:3000")
 public class CourseController {
 
   private final CourseMapper courseMapper;
   private final ICourseService iCourseService;
+  private final CourseService courseService;
 
   public CourseController(
       CourseService courseService, CourseMapper courseMapper, ICourseService iCourseService) {
     this.courseMapper = courseMapper;
     this.iCourseService = iCourseService;
+    this.courseService = courseService;
   }
 
   @GetMapping("")
   @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
-  public ResponseEntity<PageDto> getAllCourses(
-      @RequestParam(defaultValue = "0") int page,
-      @RequestParam(defaultValue = "10") int limit,
-      @RequestParam(required = false) Double price,
-      @RequestParam(required = false) String categoryName,
+  public ResponseEntity<?> getCourses(
+      @RequestParam int page,
+      @RequestParam int limit,
       @RequestParam(required = false) String courseName,
-      @RequestParam(required = false) Long instructorId) {
+      @RequestParam(required = false) String categoryName,
+      @RequestParam(required = false) Double price,
+      @RequestParam(required = false) Long instructorId,
+      @AuthenticationPrincipal CustomUserDetails user) // Đúng kiểu này!
+      {
     PageDto result =
-        iCourseService.getAllCourse(page, limit, courseName, categoryName, price, instructorId);
-    return new ResponseEntity<>(result, HttpStatus.OK);
+        courseService.getAllCourse(
+            page, limit, courseName, categoryName, price, instructorId, user);
+    return ResponseEntity.ok(result);
   }
 
   @GetMapping("/{id}")

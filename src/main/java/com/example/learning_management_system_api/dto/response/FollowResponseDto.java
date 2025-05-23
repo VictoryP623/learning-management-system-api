@@ -1,9 +1,14 @@
 package com.example.learning_management_system_api.dto.response;
 
+import lombok.Builder;
+import lombok.Data;
 
-public record FollowResponseDto(
-    Long studentId,
-    Long instructorId,
-    String createdAt,
-    String studentName,
-    String instructorName) {}
+@Data
+@Builder
+public class FollowResponseDto {
+  private Long studentId;
+  private Long instructorId;
+  private String createdAt;
+  private String studentName;
+  private String instructorName;
+}

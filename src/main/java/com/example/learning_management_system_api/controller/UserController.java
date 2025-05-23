@@ -12,10 +12,12 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RequestMapping("/api")
 @RestController
+// @CrossOrigin(origins = "http://localhost:3000")
 public class UserController {
 
   private final UserService userService;
@@ -25,7 +27,7 @@ public class UserController {
   }
 
   @PatchMapping("/users/{id}")
-  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor')")
+  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseEntity<UserResponseDto> updateUser(
       @PathVariable Long id, @RequestBody @Valid UserRequestDto userRequestDto) {
     return new ResponseEntity<>(userService.updateUser(id, userRequestDto), HttpStatus.OK);
@@ -55,5 +57,11 @@ public class UserController {
     return ResponseVO.success(updatedUser);
   }
 
-
+  @GetMapping("/users/me")
+  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  public ResponseEntity<UserResponseDto> getCurrentUserProfile(Authentication authentication) {
+    String email = authentication.getName(); // lấy email từ token
+    UserResponseDto user = userService.getUserByEmailUser(email);
+    return ResponseEntity.ok(user);
+  }
 }

@@ -6,17 +6,22 @@ import com.example.learning_management_system_api.dto.mapper.WithdrawMapper;
 import com.example.learning_management_system_api.dto.request.CourseDTO;
 import com.example.learning_management_system_api.dto.response.CourseResponseDto;
 import com.example.learning_management_system_api.dto.response.EarningDTO;
+import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.WithdrawResponseDTO;
 import com.example.learning_management_system_api.entity.*;
 import com.example.learning_management_system_api.repository.CategoryRepository;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.InstructorRepository;
 import com.example.learning_management_system_api.repository.WithdrawRepository;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -109,4 +114,24 @@ public class InstructorService {
         return withdrawResponseDTO;
     }
 
+    public PageDto getCoursesByInstructor(Long instructorId, int page, int limit) {
+    // Lấy instructor
+    Instructor instructor = instructorRepository.findById(instructorId)
+        .orElseThrow(() -> new NoSuchElementException("Instructor not found"));
+
+    // Lấy danh sách course theo instructor
+    Page<Course> coursePage = courseRepository.findByInstructorId(instructorId, PageRequest.of(page, limit));
+
+    List<CourseResponseDto> coursesDTOList = coursePage.getContent().stream()
+        .map(courseMapper::toResponseDTO)
+        .toList();
+
+    return new PageDto(
+        coursePage.getNumber(),
+        coursePage.getSize(),
+        coursePage.getTotalPages(),
+        coursePage.getTotalElements(),
+        new ArrayList<>(coursesDTOList)
+    );
+}
 }

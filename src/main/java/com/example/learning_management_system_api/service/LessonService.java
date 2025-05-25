@@ -6,10 +6,12 @@ import com.example.learning_management_system_api.dto.request.LessonRequestDto;
 import com.example.learning_management_system_api.dto.response.LessonResponseDto;
 import com.example.learning_management_system_api.entity.Course;
 import com.example.learning_management_system_api.entity.Lesson;
+import com.example.learning_management_system_api.entity.LessonResource;
 import com.example.learning_management_system_api.entity.Purchase;
 import com.example.learning_management_system_api.exception.AppException;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.LessonRepository;
+import com.example.learning_management_system_api.repository.LessonResourceRepository;
 import com.example.learning_management_system_api.repository.PurchaseRepository;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -28,16 +30,19 @@ public class LessonService implements ILessonService {
   private final CourseRepository courseRepository;
   private final LessonMapper lessonMapper;
   private final PurchaseRepository purchaseRepository;
+  private final LessonResourceRepository lessonResourceRepository;
 
   public LessonService(
       LessonRepository lessonRepository,
       CourseRepository courseRepository,
       LessonMapper lessonMapper,
-      PurchaseRepository purchaseRepository) {
+      PurchaseRepository purchaseRepository,
+      LessonResourceRepository lessonResourceRepository) {
     this.lessonRepository = lessonRepository;
     this.courseRepository = courseRepository;
     this.lessonMapper = lessonMapper;
     this.purchaseRepository = purchaseRepository;
+    this.lessonResourceRepository = lessonResourceRepository;
   }
 
   public LessonResponseDto createLesson(LessonRequestDto requestDTO) {
@@ -58,7 +63,8 @@ public class LessonService implements ILessonService {
     checkPermission(course);
     Lesson lesson = lessonMapper.toEntity(requestDTO);
     lesson.setCourse(course);
-
+    lesson.setIsFree(requestDTO.isFree());
+    lesson.setResourceUrl(requestDTO.resourceUrl());
     Lesson savedLesson = lessonRepository.save(lesson);
 
     return lessonMapper.toDto(savedLesson);
@@ -74,14 +80,31 @@ public class LessonService implements ILessonService {
   }
 
   public List<LessonResponseDto> getAllLessons(Long courseId, String name) {
-    Course course =
-        courseRepository
-            .findById(courseId)
-            .orElseThrow(() -> new NoSuchElementException("Course not found with ID: " + courseId));
-    checkGetPermission(course);
     List<Lesson> lessonList =
         lessonRepository.findByCourse_IdAndNameContaining(courseId, name == null ? "" : name);
-    return lessonList.stream().map(lessonMapper::toDto).collect(Collectors.toList());
+
+    return lessonList.stream()
+        .map(
+            lesson -> {
+              LessonResponseDto dto = lessonMapper.toDto(lesson);
+              if (Boolean.TRUE.equals(lesson.getIsFree())) {
+                List<LessonResource> resources =
+                    lessonResourceRepository.findByLessonId(lesson.getId());
+                if (!resources.isEmpty()) {
+                  LessonResource videoResource =
+                      resources.stream()
+                          .filter(
+                              r -> r.getUrl() != null && r.getUrl().toLowerCase().endsWith(".mp4"))
+                          .findFirst()
+                          .orElse(resources.get(0));
+                  dto.setResourceUrl(videoResource.getUrl());
+                }
+              } else {
+                dto.setResourceUrl(null);
+              }
+              return dto;
+            })
+        .collect(Collectors.toList());
   }
 
   public LessonResponseDto updateLesson(Long id, LessonRequestDto requestDTO) {
@@ -89,8 +112,11 @@ public class LessonService implements ILessonService {
         lessonRepository
             .findById(id)
             .orElseThrow(() -> new NoSuchElementException("Lesson not found with ID: " + id));
+
     lessonMapper.updateLessonEntity(requestDTO, lesson);
     checkPermission(lesson.getCourse());
+
+    // Cập nhật course nếu có thay đổi
     if (requestDTO.courseId() != null) {
       Course course =
           courseRepository
@@ -102,6 +128,12 @@ public class LessonService implements ILessonService {
       checkPermission(course);
       lesson.setCourse(course);
     }
+    // Cập nhật isFree và resourceUrl
+    lesson.setIsFree(requestDTO.isFree());
+    if (requestDTO.resourceUrl() != null) {
+      lesson.setResourceUrl(requestDTO.resourceUrl());
+    }
+    // Kiểm tra tên bài học bị trùng trong khóa học
     if (requestDTO.name() != null) {
       if (lessonRepository.existsByNameAndCourseIdAndIdNot(
           requestDTO.name(), lesson.getCourse().getId(), lesson.getId())) {

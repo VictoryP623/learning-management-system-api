@@ -10,6 +10,7 @@ import org.mapstruct.Mappings;
 public interface InstructorMapper {
 
   @Mappings({
+    @Mapping(source = "id", target = "id"),
     @Mapping(source = "user.fullname", target = "fullname"),
     @Mapping(source = "user.email", target = "email"),
   })

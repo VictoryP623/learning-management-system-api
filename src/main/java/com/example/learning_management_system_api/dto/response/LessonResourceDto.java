@@ -2,10 +2,14 @@ package com.example.learning_management_system_api.dto.response;
 
 import java.time.LocalDateTime;
 
-public record LessonResourceDto(
-    Long id,
-    String url,
-    String name,
-    Long lessonId,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt) {}
+import lombok.Data;
+
+@Data
+public class LessonResourceDto{
+    private Long id;
+    private String url;
+    private String name;
+    private Long lessonId;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+}

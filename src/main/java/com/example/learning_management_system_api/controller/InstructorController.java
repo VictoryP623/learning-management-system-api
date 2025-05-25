@@ -2,6 +2,7 @@ package com.example.learning_management_system_api.controller;
 
 import com.example.learning_management_system_api.dto.request.CourseDTO;
 import com.example.learning_management_system_api.dto.response.EarningDTO;
+import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.ResponseVO;
 import com.example.learning_management_system_api.entity.Instructor;
 import com.example.learning_management_system_api.repository.InstructorRepository;
@@ -87,5 +88,14 @@ public class InstructorController {
     Instructor instructor = instructorRepository.findByUserId(userId);
     if (instructor == null) return ResponseEntity.notFound().build();
     return ResponseEntity.ok(instructor.getId());
+  }
+
+  @GetMapping("/instructors/{id}/courses")
+  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  public ResponseVO<PageDto> getCoursesByInstructor(
+      @PathVariable Long id,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "10") int limit) {
+    return ResponseVO.success(instructorService.getCoursesByInstructor(id, page, limit));
   }
 }

@@ -5,6 +5,7 @@ import com.example.learning_management_system_api.dto.mapper.CourseMapper;
 import com.example.learning_management_system_api.dto.mapper.ReviewMapper;
 import com.example.learning_management_system_api.dto.mapper.StudentMapper;
 import com.example.learning_management_system_api.dto.response.CourseResponseDto;
+import com.example.learning_management_system_api.dto.response.LessonResponseDto;
 import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.ReviewResponseDto;
 import com.example.learning_management_system_api.dto.response.StudentResponseDto;
@@ -35,6 +36,7 @@ public class CourseService implements ICourseService {
   private final ReviewRepository reviewRepository;
   private final ReviewMapper reviewMapper;
   private final InstructorRepository instructorRepository;
+  private final LessonService lessonService;
 
   public CourseService(
       CourseRepository courseRepository,
@@ -43,7 +45,8 @@ public class CourseService implements ICourseService {
       EnrollRepository enrollRepository,
       ReviewRepository reviewRepository,
       ReviewMapper reviewMapper,
-      InstructorRepository instructorRepository) {
+      InstructorRepository instructorRepository,
+      LessonService lessonService) {
     this.instructorRepository = instructorRepository;
     this.courseRepository = courseRepository;
     this.courseMapper = courseMapper;
@@ -51,6 +54,7 @@ public class CourseService implements ICourseService {
     this.enrollRepository = enrollRepository;
     this.reviewRepository = reviewRepository;
     this.reviewMapper = reviewMapper;
+    this.lessonService = lessonService;
   }
 
   // Return list of course with metadata about paging
@@ -103,7 +107,22 @@ public class CourseService implements ICourseService {
             .findById(id)
             .orElseThrow(
                 () -> new NoSuchElementException("Course with id " + id + " is not found"));
-    return courseMapper.toResponseDTO(course);
+    // Lấy danh sách bài học (KHÔNG check quyền)
+    List<LessonResponseDto> lessonList = lessonService.getAllLessons(course.getId(), null);
+
+    return new CourseResponseDto(
+        course.getId(),
+        course.getInstructor().getUser().getFullname(),
+        course.getCategory().getName(),
+        course.getPrice(),
+        course.getCreatedAt(),
+        course.getUpdatedAt(),
+        course.getThumbnail(),
+        course.getStatus(),
+        course.getName(),
+        course.getCategory().getId(),
+        course.getRejectedReason(),
+        lessonList);
   }
 
   @Override

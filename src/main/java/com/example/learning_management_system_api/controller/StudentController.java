@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api")
-//@CrossOrigin(origins = "http://localhost:3000")
+// @CrossOrigin(origins = "http://localhost:3000")
 public class StudentController {
   @Autowired private IStudentService studentService;
   @Autowired private StudentRepository studentRepository;
@@ -112,7 +112,7 @@ public class StudentController {
   @GetMapping("/instructors")
   @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseVO<PageDto> searchInstructors(
-      @RequestParam String name,
+      @RequestParam(required = false, defaultValue = "") String name,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "10") int limit) {
     return ResponseVO.success(studentService.searchInstructors(name, page, limit));

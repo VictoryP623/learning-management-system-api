@@ -11,18 +11,14 @@ import com.example.learning_management_system_api.exception.ConflictException;
 import com.example.learning_management_system_api.exception.DatabaseException;
 import com.example.learning_management_system_api.repository.CategoryRepository;
 import com.example.learning_management_system_api.repository.CourseRepository;
+import java.util.List;
+import java.util.NoSuchElementException;
 import lombok.SneakyThrows;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.stream.Collectors;
 
 @Service
 public class CategoryService implements ICategoryService {
@@ -38,32 +34,31 @@ public class CategoryService implements ICategoryService {
         this.categoryMapper = categoryMapper;
     }
 
-    @Override
-    public PageDto getAllCategories(int page, int limit, String categoryName) {
-        Pageable pageable = PageRequest.of(page, limit);
+  @Override
+  public PageDto getAllCategories(int page, int limit, String categoryName) {
+    Pageable pageable = PageRequest.of(page, limit);
 
-        Page<Category> categoryPage;
+    Page<Category> categoryPage;
 
-        if (categoryName != null && !categoryName.isEmpty()) {
-            categoryPage = categoryRepository.findByNameContainingIgnoreCase(categoryName, pageable);
-        } else {
-            categoryPage = categoryRepository.findAll(pageable);
-        }
-
-        List<Object> data = categoryPage.getContent()
-                .stream()
-                .map(categoryMapper::toResponseDTO)
-                .map(category -> (Object) category)
-                .toList();
-
-        return new PageDto(
-                categoryPage.getNumber(),
-                categoryPage.getSize(),
-                categoryPage.getTotalPages(),
-                categoryPage.getTotalElements(),
-                data
-        );
+    if (categoryName != null && !categoryName.isEmpty()) {
+      categoryPage = categoryRepository.findByNameStartingWithIgnoreCase(categoryName, pageable);
+    } else {
+      categoryPage = categoryRepository.findAll(pageable);
     }
+
+    List<Object> data =
+        categoryPage.getContent().stream()
+            .map(categoryMapper::toResponseDTO)
+            .map(category -> (Object) category)
+            .toList();
+
+    return new PageDto(
+        categoryPage.getNumber(),
+        categoryPage.getSize(),
+        categoryPage.getTotalPages(),
+        categoryPage.getTotalElements(),
+        data);
+  }
 
     @Override
     @SneakyThrows

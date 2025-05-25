@@ -16,6 +16,8 @@ import com.example.learning_management_system_api.repository.StudentRepository;
 import com.example.learning_management_system_api.repository.UserRepository;
 import com.example.learning_management_system_api.utils.enums.UserRole;
 import com.example.learning_management_system_api.utils.enums.UserStatus;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.UserRecord;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
@@ -86,7 +88,23 @@ public class AuthenticationService implements IAuthenticationService {
       instructorRepository.save(instructor);
     }
 
-    String verifyLink = String.format("%s/api/auth/verify?token=%s", CLIENT_URL, token);
+    try {
+      com.google.firebase.auth.UserRecord.CreateRequest createRequest =
+          new com.google.firebase.auth.UserRecord.CreateRequest()
+              .setEmail(request.getEmail())
+              .setPassword(request.getPassword())
+              .setEmailVerified(false)
+              .setDisplayName(user.getFullname());
+
+      com.google.firebase.auth.UserRecord userRecord =
+          com.google.firebase.auth.FirebaseAuth.getInstance().createUser(createRequest);
+      System.out.println("Created user on Firebase Auth: " + userRecord.getUid());
+    } catch (Exception ex) {
+      System.out.println("Lỗi khi tạo user trên Firebase Auth: " + ex.getMessage());
+    }
+
+    String verifyLink = String.format("%s/verify-email?token=%s", CLIENT_URL, token);
+
     Context context = new Context();
     context.setVariable("email", request.getEmail());
     context.setVariable("verificationLink", verifyLink);
@@ -216,7 +234,8 @@ public class AuthenticationService implements IAuthenticationService {
     user.setVerificationCodeExpiry(LocalDateTime.now().plusHours(24));
     userRepository.save(user);
 
-    String verifyLink = String.format("%s/auth/verify?token=%s", CLIENT_URL, token);
+    String verifyLink = String.format("%s/verify-email?token=%s", CLIENT_URL, token);
+
     Context context = new Context();
     context.setVariable("email", email);
     context.setVariable("verificationLink", verifyLink);
@@ -247,6 +266,43 @@ public class AuthenticationService implements IAuthenticationService {
     return "Please check your email to reset your account.";
   }
 
+  public void syncPasswordWithFirebase(String email, String password, String displayName) {
+    try {
+      UserRecord userRecord;
+      try {
+        // Thử lấy user theo email
+        userRecord = FirebaseAuth.getInstance().getUserByEmail(email);
+
+        // Nếu tìm thấy thì update password
+        UserRecord.UpdateRequest updateRequest =
+            new UserRecord.UpdateRequest(userRecord.getUid()).setPassword(password);
+        FirebaseAuth.getInstance().updateUser(updateRequest);
+
+        System.out.println("Đã update password trên Firebase Auth cho user: " + email);
+
+      } catch (com.google.firebase.auth.FirebaseAuthException e) {
+        // Nếu lỗi là NOT_FOUND thì tạo user mới
+        if ("USER_NOT_FOUND".equals(e.getErrorCode())) {
+          com.google.firebase.auth.UserRecord.CreateRequest createRequest =
+              new com.google.firebase.auth.UserRecord.CreateRequest()
+                  .setEmail(email)
+                  .setPassword(password)
+                  .setEmailVerified(false)
+                  .setDisplayName(displayName);
+          FirebaseAuth.getInstance().createUser(createRequest);
+
+          System.out.println("Tạo mới user trên Firebase Auth: " + email);
+        } else {
+          // Các lỗi khác log ra
+          System.err.println("Lỗi Firebase Auth: " + e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      // Các lỗi khác log ra
+      System.err.println("Lỗi đồng bộ Firebase Auth: " + e.getMessage());
+    }
+  }
+
   @Override
   public String updatePassword(String token, String password) {
     Optional<User> userOptional = userRepository.findByVerificationCode(token);
@@ -268,6 +324,9 @@ public class AuthenticationService implements IAuthenticationService {
     user.setVerificationCodeExpiry(null);
     userRepository.save(user);
 
+    // --- Đồng bộ lên Firebase Auth, tự tạo user nếu chưa có ---
+    syncPasswordWithFirebase(user.getEmail(), password, user.getFullname());
+
     return "Password reset successful";
   }
 
@@ -288,6 +347,9 @@ public class AuthenticationService implements IAuthenticationService {
 
     user.setPassword(encoder.encode(request.getNewPassword()));
     userRepository.save(user);
+
+    // --- Đồng bộ lên Firebase Auth, tự tạo user nếu chưa có ---
+    syncPasswordWithFirebase(user.getEmail(), request.getNewPassword(), user.getFullname());
 
     return "Password updated successfully";
   }

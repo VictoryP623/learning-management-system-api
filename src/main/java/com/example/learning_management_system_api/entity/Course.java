@@ -16,6 +16,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Table(name = "course")
 public class Course {
 
+  
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -35,6 +36,9 @@ public class Course {
   private String status;
 
   private String name;
+
+  @Column(name = "rejected_reason")
+  private String rejectedReason;
 
   @ManyToOne
   @JoinColumn(name = "category_id", referencedColumnName = "id")

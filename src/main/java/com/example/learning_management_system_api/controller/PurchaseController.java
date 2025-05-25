@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("api/purchases")
-//@CrossOrigin(origins = "http://localhost:3000")
+// @CrossOrigin(origins = "http://localhost:3000")
 public class PurchaseController {
 
   private final PurchaseService purchaseService;
@@ -27,7 +27,8 @@ public class PurchaseController {
   @PreAuthorize("hasRole('ROLE_Student')")
   public ResponseEntity<Object> initPurchase(
       @AuthenticationPrincipal CustomUserDetails userDetails) {
-    return new ResponseEntity<>(purchaseService.initPurchase(userDetails.getUserId()), HttpStatus.OK);
+    return new ResponseEntity<>(
+        purchaseService.initPurchase(userDetails.getUserId()), HttpStatus.OK);
   }
 
   @GetMapping("/callback")
@@ -43,8 +44,8 @@ public class PurchaseController {
 
   @GetMapping("/courses")
   @PreAuthorize("hasRole('ROLE_Student')")
-  public ResponseEntity<PageDto> getBoughtCourse(@RequestParam(defaultValue = "0") int page,
-                                                 @RequestParam(defaultValue = "10") int size) {
+  public ResponseEntity<PageDto> getBoughtCourse(
+      @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "10") int size) {
     return new ResponseEntity<>(purchaseService.getBoughtCourse(page, size), HttpStatus.OK);
   }
 }

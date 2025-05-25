@@ -7,13 +7,11 @@ import org.mapstruct.*;
 
 @Mapper(componentModel = "spring")
 public interface LessonMapper {
-
   Lesson toEntity(LessonRequestDto lessonDto);
 
-  @Mappings({
-    @Mapping(source = "course.id", target = "courseId"),
-    @Mapping(source = "course.name", target = "courseName"),
-  })
+  @Mapping(source = "course.id", target = "courseId")
+  @Mapping(source = "course.name", target = "courseName")
+  @Mapping(source = "resourceUrl", target = "resourceUrl")
   LessonResponseDto toDto(Lesson lesson);
 
   @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

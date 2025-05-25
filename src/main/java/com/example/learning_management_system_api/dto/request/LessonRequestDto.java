@@ -4,4 +4,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 public record LessonRequestDto(
-    @NotBlank String name, @NotBlank String description, @NotNull Long courseId) {}
+    @NotBlank String name,
+    @NotBlank String description,
+    @NotNull Long courseId,
+    Boolean isFree,
+    String resourceUrl) {}

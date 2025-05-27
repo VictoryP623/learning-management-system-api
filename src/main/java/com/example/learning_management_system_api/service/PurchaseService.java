@@ -7,241 +7,284 @@ import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.PurchaseResponseDto;
 import com.example.learning_management_system_api.entity.Cart;
 import com.example.learning_management_system_api.entity.Course;
+import com.example.learning_management_system_api.entity.Enroll;
+import com.example.learning_management_system_api.entity.Id.EnrollId;
 import com.example.learning_management_system_api.entity.Purchase;
 import com.example.learning_management_system_api.entity.Student;
 import com.example.learning_management_system_api.exception.AppException;
 import com.example.learning_management_system_api.repository.CartRepository;
+import com.example.learning_management_system_api.repository.EnrollRepository;
+import com.example.learning_management_system_api.repository.LessonCompletionRepository;
+import com.example.learning_management_system_api.repository.LessonRepository;
 import com.example.learning_management_system_api.repository.PurchaseRepository;
+import com.example.learning_management_system_api.repository.ReviewRepository;
 import com.example.learning_management_system_api.repository.StudentRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.SneakyThrows;
-import net.minidev.json.JSONObject;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.core5.http.io.entity.StringEntity;
+import com.paypal.api.payments.*;
+import com.paypal.base.rest.APIContext;
+import com.paypal.base.rest.PayPalRESTException;
+import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PurchaseService {
 
-    @Value("${spring.momo.access-key}")
-    String ACCESS_KEY;
-    @Value("${spring.momo.secret-key}")
-    String SECRET_KEY;
-    private static final String PARTNER_CODE = "MOMO";
-    private static final String ENDPOINT = "https://test-payment.momo.vn/v2/gateway/api/create";
+  @Value("${paypal.client.id}")
+  private String clientId;
 
-    private final PurchaseRepository purchaseRepository;
-    private final CartRepository cartRepository;
-    private final StudentRepository studentRepository;
-    private final CourseMapper courseMapper;
+  @Value("${paypal.client.secret}")
+  private String clientSecret;
 
+  @Value("${paypal.mode}")
+  private String mode;
 
-    public PurchaseService(PurchaseRepository purchaseRepository, CartRepository cartRepository, StudentRepository studentRepository, CourseMapper courseMapper) {
-        this.purchaseRepository = purchaseRepository;
-        this.cartRepository = cartRepository;
-        this.studentRepository = studentRepository;
-        this.courseMapper = courseMapper;
+  @Value("${paypal.return.url}")
+  private String returnUrl;
+
+  @Value("${paypal.cancel.url}")
+  private String cancelUrl;
+
+  private final PurchaseRepository purchaseRepository;
+  private final CartRepository cartRepository;
+  private final StudentRepository studentRepository;
+  private final CourseMapper courseMapper;
+  private final LessonCompletionRepository lessonCompletionRepository;
+  private final LessonRepository lessonRepository;
+  private final EnrollRepository enrollRepository;
+  private final ReviewRepository reviewRepository;
+
+  public PurchaseService(
+      PurchaseRepository purchaseRepository,
+      CartRepository cartRepository,
+      StudentRepository studentRepository,
+      CourseMapper courseMapper,
+      LessonCompletionRepository lessonCompletionRepository,
+      LessonRepository lessonRepository,
+      EnrollRepository enrollRepository,
+      ReviewRepository reviewRepository) {
+    this.reviewRepository = reviewRepository;
+    this.enrollRepository = enrollRepository;
+    this.lessonCompletionRepository = lessonCompletionRepository;
+    this.lessonRepository = lessonRepository;
+    this.purchaseRepository = purchaseRepository;
+    this.cartRepository = cartRepository;
+    this.studentRepository = studentRepository;
+    this.courseMapper = courseMapper;
+  }
+
+  // Tạo order PayPal
+  public Map<String, String> createPaypalPayment(Long userId, List<Long> courseIds) {
+    Optional<Student> studentOpt = studentRepository.findByUserId(userId);
+    if (studentOpt.isEmpty()) throw new NoSuchElementException("UserId not found or not a student");
+    Student student = studentOpt.get();
+
+    // Chỉ lấy cart chứa courseId được chọn
+    List<Cart> cartList =
+        cartRepository.findByStudent(student).stream()
+            .filter(c -> courseIds.contains(c.getCourse().getId()))
+            .toList();
+    List<Course> courseList = cartList.stream().map(Cart::getCourse).toList();
+    if (courseList.isEmpty()) throw new AppException(400, "Không có khóa học nào được chọn!");
+
+    Set<Course> courseSet = new HashSet<>(courseList);
+    Double totalAmount = courseList.stream().mapToDouble(Course::getPrice).sum();
+
+    // Lưu purchase với trạng thái chưa thanh toán
+    Purchase purchase = new Purchase();
+    purchase.setStudent(student);
+    purchase.setIsPaid(false);
+    purchase.setCourses(courseSet);
+    purchase.setTotalAmount(totalAmount);
+    Purchase savedPurchase = purchaseRepository.save(purchase);
+
+    // Tạo order PayPal như cũ
+    Amount amount = new Amount();
+    amount.setCurrency("USD");
+    amount.setTotal(String.format("%.2f", totalAmount));
+    Transaction transaction = new Transaction();
+    transaction.setDescription("Thanh toán khóa học #" + savedPurchase.getId());
+    transaction.setAmount(amount);
+
+    List<Transaction> transactions = new ArrayList<>();
+    transactions.add(transaction);
+
+    Payer payer = new Payer();
+    payer.setPaymentMethod("paypal");
+
+    Payment payment = new Payment();
+    payment.setIntent("sale");
+    payment.setPayer(payer);
+    payment.setTransactions(transactions);
+
+    RedirectUrls redirectUrls = new RedirectUrls();
+    redirectUrls.setCancelUrl(cancelUrl);
+    redirectUrls.setReturnUrl(returnUrl + "?purchaseId=" + savedPurchase.getId());
+    payment.setRedirectUrls(redirectUrls);
+
+    try {
+      APIContext apiContext = new APIContext(clientId, clientSecret, mode);
+      Payment createdPayment = payment.create(apiContext);
+
+      String approvalLink =
+          createdPayment.getLinks().stream()
+              .filter(link -> "approval_url".equals(link.getRel()))
+              .findFirst()
+              .map(Links::getHref)
+              .orElseThrow(() -> new RuntimeException("No approval_url found in PayPal response"));
+
+      Map<String, String> result = new HashMap<>();
+      result.put("payUrl", approvalLink);
+      return result;
+    } catch (PayPalRESTException e) {
+      throw new RuntimeException("PayPal error: " + e.getMessage(), e);
     }
+  }
 
-    @SneakyThrows
-    public Object initPurchase(Long userId) {
-        Optional<Student> studentOpt = studentRepository.findByUserId(userId);
-        if (studentOpt.isEmpty()) {
-            throw new NoSuchElementException("UserId not found or not a student");
+  // Xác nhận thanh toán khi PayPal redirect về
+  @Transactional
+  public void executePaypalPayment(String paymentId, String payerId, Long purchaseId)
+      throws PayPalRESTException {
+
+    APIContext apiContext = new APIContext(clientId, clientSecret, mode);
+    Payment payment = new Payment();
+    payment.setId(paymentId);
+
+    PaymentExecution paymentExecution = new PaymentExecution();
+    paymentExecution.setPayerId(payerId);
+
+    Payment executedPayment = payment.execute(apiContext, paymentExecution);
+
+    // Nếu payment thành công, update is_paid và xóa cart
+    if ("approved".equalsIgnoreCase(executedPayment.getState())) {
+      Purchase purchase =
+          purchaseRepository
+              .findById(purchaseId)
+              .orElseThrow(() -> new RuntimeException("Purchase not found"));
+      purchase.setIsPaid(true);
+      purchaseRepository.save(purchase);
+
+      // Xóa cart của student này sau khi xác nhận thành công
+      Student student = purchase.getStudent();
+      for (Course course : purchase.getCourses()) {
+        cartRepository.deleteByStudentAndCourse(student, course);
+      }
+
+      // ===== Thêm logic ENROLL sau khi mua thành công =====
+      for (Course course : purchase.getCourses()) {
+        EnrollId enrollId = new EnrollId(student.getId(), course.getId());
+        if (!enrollRepository.existsById(enrollId)) {
+          Enroll enroll = new Enroll();
+          enroll.setId(enrollId);
+          enroll.setStudent(student);
+          enroll.setCourse(course);
+          enrollRepository.save(enroll);
         }
-        Student student = studentOpt.get();
-        List<Cart> cartList = cartRepository.findByStudent(student);
-        List<Course> courseList = cartList.stream().map(Cart::getCourse).toList();
-
-        if (courseList.isEmpty()) {
-            throw new AppException(400,"Cart is empty");
-        }
-
-        Set<Course> courseSet = new HashSet<>(courseList);
-
-        Double totalAmount = courseList.stream().mapToDouble(Course::getPrice).sum();
-        Purchase purchase = new Purchase();
-        purchase.setStudent(student);
-        purchase.setIsPaid(false);
-        purchase.setCourses(courseSet);
-        purchase.setTotalAmount(totalAmount);
-        Purchase savedPurchase = purchaseRepository.save(purchase);
-
-        //Delete cart after add to Purchase
-        cartRepository.deleteAll(cartList);
-
-        //Call Momo API
-        return initMomoPayment(savedPurchase);
+      }
+      // ====================================================
+    } else {
+      throw new RuntimeException("Payment not approved");
     }
+  }
 
-    @SneakyThrows
-    public Object initMomoPayment(Purchase purchase) {
+  public List<PurchaseResponseDto> getAllPurchase() {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+      List<Purchase> listPurchase =
+          purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(
+              customUserDetails.getUserId());
+      return listPurchase.stream().map(this::toDto).toList();
+    } else return null;
+  }
 
-        // Payment information
-        Integer amount = (int) Math.round(purchase.getTotalAmount());
-        String orderId = "LMSPUR_" + purchase.getId() + UUID.randomUUID();
-        String orderInfo = "Buy courses in LMS website for user" + purchase.getStudent().getUser().getFullname();
-        String redirectUrl = "http://iiex.tech:8080/api/purchases/callback";
-        String ipnUrl = "http://iiex.tech:8080/api/purchases/callback";
-        String requestType = "payWithMethod";
-        String extraData = purchase.getId().toString();
-        String orderGroupId = "";
-        boolean autoCapture = true;
-        String lang = "vi";
+  public PageDto getBoughtCourse(int page, int size) {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
 
-        // Generate raw signature string
-        String rawSignature = String.format(
-                "accessKey=%s&amount=%s&extraData=%s&ipnUrl=%s&orderId=%s&orderInfo=%s&partnerCode=%s&redirectUrl=%s&requestId=%s&requestType=%s",
-                ACCESS_KEY, amount, extraData, ipnUrl, orderId, orderInfo, PARTNER_CODE, redirectUrl, orderId, requestType
-        );
+      // Lấy studentId hiện tại
+      Long userId = customUserDetails.getUserId();
+      Optional<Student> studentOpt = studentRepository.findByUserId(userId);
+      Long studentId = studentOpt.map(Student::getId).orElse(null);
 
-        // Generate HMAC SHA256 signature
-        String signature = hmacSHA256(rawSignature, SECRET_KEY);
+      // Lấy các purchase đã thanh toán
+      List<Purchase> purchaseList =
+          purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(userId);
 
-        // Build json request payload
-        JSONObject requestBody = new JSONObject();
-        requestBody.put("partnerCode", PARTNER_CODE);
-        requestBody.put("partnerName", "LMS Website");
-        requestBody.put("storeId", "LMS Website");
-        requestBody.put("requestId", orderId);
-        requestBody.put("amount", amount);
-        requestBody.put("orderId", orderId);
-        requestBody.put("orderInfo", orderInfo);
-        requestBody.put("redirectUrl", redirectUrl);
-        requestBody.put("ipnUrl", ipnUrl);
-        requestBody.put("lang", lang);
-        requestBody.put("requestType", requestType);
-        requestBody.put("autoCapture", autoCapture);
-        requestBody.put("extraData", extraData);
-        requestBody.put("orderGroupId", orderGroupId);
-        requestBody.put("signature", signature);
+      // Lấy các khóa học đã mua (không trùng)
+      List<Course> boughtCourseEntity =
+          purchaseList.stream()
+              .flatMap(purchase -> purchase.getCourses().stream())
+              .distinct()
+              .toList();
 
-        // Send request to MoMo
-        CloseableHttpClient httpClient = HttpClients.createDefault();
-        HttpPost httpPost = new HttpPost(ENDPOINT);
-        httpPost.setHeader("Content-Type", "application/json");
-        httpPost.setEntity(new StringEntity(requestBody.toString(), StandardCharsets.UTF_8));
+      // Map từng course, tính completed/total
+      List<CourseResponseDto> boughtCourse =
+          boughtCourseEntity.stream()
+              .map(
+                  course -> {
+                    int totalLessons = (int) lessonRepository.countByCourseId(course.getId());
+                    int completedLessons = 0;
+                    if (studentId != null) {
+                      completedLessons =
+                          (int)
+                              lessonCompletionRepository.countByStudentIdAndLesson_Course_Id(
+                                  studentId, course.getId());
+                    }
+                    // Tính rating trung bình của course (nếu có cột này hoặc phải join từ bảng
+                    // review)
+                    Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
+                    // Nếu không có, truyền 0.0 hoặc null tùy trường hợp
+                    if (avgRating == null) avgRating = 0.0;
 
-        CloseableHttpResponse response = httpClient.execute(httpPost);
-        int statusCode = response.getCode();
-        String responseBody = new String(response.getEntity().getContent().readAllBytes(), StandardCharsets.UTF_8);
-        // Deserialize JSON string into a Map
-        ObjectMapper objectMapper = new ObjectMapper();
-        Object result = objectMapper.readValue(responseBody, Map.class);
-        if (statusCode!=200){
-            throw new RuntimeException(result.toString());
-        }
-        return result;
+                    return new CourseResponseDto(
+                        course.getId(),
+                        course.getInstructor().getUser().getFullname(),
+                        course.getCategory().getName(),
+                        course.getPrice(),
+                        course.getCreatedAt(),
+                        course.getUpdatedAt(),
+                        course.getThumbnail(),
+                        course.getStatus(),
+                        course.getName(),
+                        course.getCategory().getId(),
+                        course.getRejectedReason(),
+                        null, // lessons
+                        completedLessons,
+                        totalLessons,
+                        avgRating // <-- Bắt buộc truyền trường này
+                        );
+                  })
+              .toList();
+
+      // Paging thủ công
+      if (page < 0 || size < 1) {
+        throw new IllegalArgumentException("Page must start from 0 and size must greater than 0");
+      }
+      int totalElements = boughtCourse.size();
+      int totalPages = (int) Math.ceil((double) totalElements / size);
+      int startIndex = page * size;
+      int endIndex = Math.min(startIndex + size, totalElements);
+
+      List<CourseResponseDto> pagedCourse = new ArrayList<>();
+      if (startIndex < totalElements) {
+        pagedCourse = boughtCourse.subList(startIndex, endIndex);
+      }
+
+      return new PageDto(page, size, totalPages, totalElements, new ArrayList<Object>(pagedCourse));
+
+    } else {
+      return null;
     }
+  }
 
-    public ResponseEntity<String> handleMomoCallback(Map<String, String> params){
-        try {
-            // Extract parameters from the callback URL
-            String partnerCode = params.get("partnerCode");
-            String orderId = params.get("orderId");
-            String requestId = params.get("requestId");
-            String amount = params.get("amount");
-            String orderInfo = params.get("orderInfo");
-            String orderType = params.get("orderType");
-            String transId = params.get("transId");
-            String resultCode = params.get("resultCode");
-            String message = params.get("message");
-            String payType = params.get("payType");
-            String responseTime = params.get("responseTime");
-            String extraData = params.get("extraData");
-            String receivedSignature = params.get("signature");
-
-            // Build rawSignature
-            String rawSignature = String.format(
-                    "accessKey=%s&amount=%s&extraData=%s&message=%s&orderId=%s&orderInfo=%s&orderType=%s&partnerCode=%s&payType=%s&requestId=%s&responseTime=%s&resultCode=%s&transId=%s",
-                    ACCESS_KEY, amount, extraData, message, orderId, orderInfo, orderType, partnerCode, payType, requestId, responseTime, resultCode, transId
-            );
-
-            // Generate signature
-            String generatedSignature = hmacSHA256(rawSignature, SECRET_KEY);
-
-            // Validate signature
-            if (generatedSignature.equals(receivedSignature)) {
-                //Success
-                if ("0".equals(resultCode)) {
-                    Purchase purchase = purchaseRepository.findById(Long.valueOf(extraData)).orElseThrow(()-> new NoSuchElementException("User not found"));
-                    purchase.setIsPaid(true);
-                    purchaseRepository.save(purchase);
-                    return new ResponseEntity<>("Purchase successfully", HttpStatus.OK);
-                } else {
-                    return new ResponseEntity<>("Payment fail. Result code: "+resultCode,HttpStatus.OK);
-                }
-            } else {
-                return new ResponseEntity<>("Invalid signature",HttpStatus.UNAUTHORIZED);
-            }
-        } catch (Exception e) {
-            return new ResponseEntity<>("Error:"+e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    @SneakyThrows
-    String hmacSHA256(String data, String key){
-        Mac hmac = Mac.getInstance("HmacSHA256");
-        SecretKeySpec secretKeySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        hmac.init(secretKeySpec);
-        byte[] hashBytes = hmac.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        StringBuilder hash = new StringBuilder();
-        for (byte b : hashBytes) {
-            String hex = Integer.toHexString(0xff & b);
-            if (hex.length() == 1) hash.append('0');
-            hash.append(hex);
-        }
-        return hash.toString();
-    }
-
-    public List<PurchaseResponseDto> getAllPurchase(){
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails){
-            List<Purchase> listPurchase = purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(customUserDetails.getUserId());
-            return listPurchase.stream().map(this::toDto).toList();
-        }
-        else return null;
-    }
-
-    public PageDto getBoughtCourse(int page, int size){
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails){
-            List<Purchase> purchaseList = purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(customUserDetails.getUserId());
-            List<Course> boughtCourseEntity = purchaseList.stream()
-                    .flatMap(purchase -> purchase.getCourses().stream())
-                    .distinct()
-                    .toList();
-            List<CourseResponseDto> boughtCourse = boughtCourseEntity.stream().map(courseMapper::toResponseDTO).toList();
-            if (page < 0 || size < 1) {
-                throw new IllegalArgumentException("Page must start from 0 and size must greater than 0");
-            }
-
-            int startIndex = page * size;
-            if (startIndex >= boughtCourse.size()) {
-                return new PageDto(page, size, boughtCourse.size()/size, purchaseList.size(), new ArrayList<>());
-            }
-
-            int endIndex = Math.min(startIndex + size, purchaseList.size());
-            return new PageDto(page, size, boughtCourse.size()/size, purchaseList.size(),new ArrayList<>(boughtCourse.subList(startIndex, endIndex)));
-        }
-        else return null;
-    }
-
-    PurchaseResponseDto toDto(Purchase purchase){
-        List<CourseResponseDto> listCourse = purchase.getCourses().stream().map(courseMapper::toResponseDTO).toList();
-        return new PurchaseResponseDto(purchase.getId(), purchase.getTotalAmount(), purchase.getCreatedAt(), listCourse);
-    }
+  PurchaseResponseDto toDto(Purchase purchase) {
+    List<CourseResponseDto> listCourse =
+        purchase.getCourses().stream().map(courseMapper::toResponseDTO).toList();
+    return new PurchaseResponseDto(
+        purchase.getId(), purchase.getTotalAmount(), purchase.getCreatedAt(), listCourse);
+  }
 }

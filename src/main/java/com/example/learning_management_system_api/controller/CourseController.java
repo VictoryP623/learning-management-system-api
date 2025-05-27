@@ -39,7 +39,7 @@ public class CourseController {
   }
 
   @GetMapping("")
-  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  //@PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseEntity<?> getCourses(
       @RequestParam int page,
       @RequestParam int limit,

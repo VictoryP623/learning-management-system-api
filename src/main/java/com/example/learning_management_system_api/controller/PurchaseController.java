@@ -23,25 +23,38 @@ public class PurchaseController {
     this.purchaseService = purchaseService;
   }
 
-  @PostMapping("")
+  // 1. FE gọi API này để lấy link PayPal
+  @PostMapping("/paypal")
   @PreAuthorize("hasRole('ROLE_Student')")
-  public ResponseEntity<Object> initPurchase(
-      @AuthenticationPrincipal CustomUserDetails userDetails) {
-    return new ResponseEntity<>(
-        purchaseService.initPurchase(userDetails.getUserId()), HttpStatus.OK);
+  public ResponseEntity<?> createPaypal(
+      @AuthenticationPrincipal CustomUserDetails userDetails, @RequestBody List<Long> courseIds) {
+    return ResponseEntity.ok(
+        purchaseService.createPaypalPayment(userDetails.getUserId(), courseIds));
   }
 
-  @GetMapping("/callback")
-  public ResponseEntity<String> handleMomoCallback(@RequestParam Map<String, String> params) {
-    return purchaseService.handleMomoCallback(params);
+  // 2. FE gọi API này sau khi PayPal redirect về (xác nhận giao dịch)
+  @PostMapping("/paypal/execute")
+  @PreAuthorize("hasRole('ROLE_Student')")
+  public ResponseEntity<?> executePaypalPayment(@RequestBody Map<String, String> payload) {
+    String paymentId = payload.get("paymentId");
+    String payerId = payload.get("payerId");
+    Long purchaseId = Long.parseLong(payload.get("purchaseId"));
+    try {
+      purchaseService.executePaypalPayment(paymentId, payerId, purchaseId);
+      return ResponseEntity.ok("Thanh toán thành công!");
+    } catch (Exception e) {
+      return ResponseEntity.status(500).body("Thanh toán thất bại! " + e.getMessage());
+    }
   }
 
+  // Lấy danh sách purchase của user
   @GetMapping("")
   @PreAuthorize("hasRole('ROLE_Student')")
   public ResponseEntity<List<PurchaseResponseDto>> getPurchases() {
     return new ResponseEntity<>(purchaseService.getAllPurchase(), HttpStatus.OK);
   }
 
+  // Lấy khóa học đã mua
   @GetMapping("/courses")
   @PreAuthorize("hasRole('ROLE_Student')")
   public ResponseEntity<PageDto> getBoughtCourse(

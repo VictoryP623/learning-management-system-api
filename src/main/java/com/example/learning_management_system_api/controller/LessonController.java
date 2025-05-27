@@ -1,12 +1,19 @@
 package com.example.learning_management_system_api.controller;
 
+import com.example.learning_management_system_api.config.CustomUserDetails;
 import com.example.learning_management_system_api.dto.request.LessonRequestDto;
 import com.example.learning_management_system_api.dto.response.LessonResponseDto;
+import com.example.learning_management_system_api.entity.Student;
+import com.example.learning_management_system_api.repository.StudentRepository;
 import com.example.learning_management_system_api.service.ILessonService;
+import com.example.learning_management_system_api.service.LessonService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,9 +23,16 @@ import org.springframework.web.bind.annotation.*;
 public class LessonController {
 
   private final ILessonService lessonService;
+  private final StudentRepository studentRepository;
+  private final LessonService lessonServiceImpl;
 
-  public LessonController(ILessonService lessonService) {
-    this.lessonService = lessonService;
+  public LessonController(
+      ILessonService lessonService,
+      StudentRepository studentRepository,
+      LessonService lessonServiceImpl) {
+    this.lessonService = lessonServiceImpl;
+    this.studentRepository = studentRepository;
+    this.lessonServiceImpl = lessonServiceImpl;
   }
 
   @PreAuthorize(" hasRole('ROLE_Instructor') ")
@@ -58,5 +72,24 @@ public class LessonController {
   public ResponseEntity<Void> deleteLesson(@PathVariable Long id) {
     lessonService.deleteLesson(id);
     return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/{lessonId}/complete")
+  @PreAuthorize("hasRole('ROLE_Student')")
+  public ResponseEntity<?> markLessonCompleted(@PathVariable Long lessonId) {
+    // Lấy studentId từ Security
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth == null || !(auth.getPrincipal() instanceof CustomUserDetails customUserDetails)) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Not authenticated");
+    }
+    Long userId = customUserDetails.getUserId();
+    // Lấy studentId từ userId
+    Long studentId =
+        studentRepository
+            .findByUserId(userId)
+            .map(Student::getId)
+            .orElseThrow(() -> new RuntimeException("Student not found for userId: " + userId));
+    lessonServiceImpl.markLessonCompleted(studentId, lessonId);
+    return ResponseEntity.ok("Lesson marked as completed");
   }
 }

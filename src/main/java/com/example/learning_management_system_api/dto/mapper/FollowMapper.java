@@ -18,9 +18,16 @@ public interface FollowMapper {
   @Mapping(target = "studentId", source = "student.id")
   @Mapping(target = "instructorId", source = "instructor.id")
   @Mapping(target = "createdAt", expression = "java(follow.getCreatedAt().toString())")
-  @Mapping(target = "studentName", expression = "java(follow.getStudent() != null && follow.getStudent().getUser() != null ? follow.getStudent().getUser().getFullname() : null)")
-  @Mapping(target = "instructorName", expression = "java(follow.getInstructor() != null && follow.getInstructor().getUser() != null ? follow.getInstructor().getUser().getFullname() : null)")
-  
+  @Mapping(
+      target = "studentName",
+      expression =
+          "java(follow.getStudent() != null && follow.getStudent().getUser() != null ?"
+              + " follow.getStudent().getUser().getFullname() : null)")
+  @Mapping(
+      target = "instructorName",
+      expression =
+          "java(follow.getInstructor() != null && follow.getInstructor().getUser() != null ?"
+              + " follow.getInstructor().getUser().getFullname() : null)")
   FollowResponseDto toResponseDto(Follow follow);
 
   UserResponseDto toUserResponseDto(User user);

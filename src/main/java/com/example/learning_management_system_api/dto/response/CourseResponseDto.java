@@ -15,4 +15,7 @@ public record CourseResponseDto(
     String name,
     Long categoryId,
     String rejectedReason,
-    List<LessonResponseDto> lessons) {}
+    List<LessonResponseDto> lessons,
+    Integer completedLessons,
+    Integer totalLessons,
+    Double rating) {}

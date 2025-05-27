@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
 public class CourseDTO {
   private Long id;
 
-  @Min(value = 1000, message = "Price must be at least 1000")
+  @Min(value = 1, message = "Price must be at least 1")
   @NotNull
   private Double price;
 

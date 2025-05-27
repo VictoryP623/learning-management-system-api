@@ -26,6 +26,9 @@ public class Review {
 
   private String description;
 
+  @Column(name = "rating")
+  private Integer rating;
+
   @CreationTimestamp private LocalDateTime createdAt;
 
   @UpdateTimestamp private LocalDateTime updatedAt;

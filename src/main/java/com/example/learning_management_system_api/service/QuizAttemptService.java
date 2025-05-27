@@ -11,14 +11,12 @@ import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.repository.QuizAttemptRepository;
 import com.example.learning_management_system_api.repository.QuizRepository;
 import com.example.learning_management_system_api.repository.UserRepository;
-import org.apache.coyote.BadRequestException;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
 
 @Service
 public class QuizAttemptService {
@@ -37,30 +35,55 @@ public class QuizAttemptService {
         this.quizAttemptMapper = quizAttemptMapper;
     }
 
-    public List<QuizAttemptResponseDto> checkAnswer(List<QuizAnswerDto> quizAnswers) {
-        List<QuizAttempt> quizAttemptList = new ArrayList<>();
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
-            Long userId = customUserDetails.getUserId();
-            User user = userRepository.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found"));
-            LocalDateTime currentTime = LocalDateTime.now();
-            for (QuizAnswerDto quizAnswer : quizAnswers) {
-                Quiz quiz = quizRepository.findById(quizAnswer.quizId()).orElseThrow(() -> new NoSuchElementException("Quiz id " + quizAnswer.quizId() + " is not found"));
-                lessonService.checkGetPermission(quiz.getLesson().getCourse());
-                AnswerOption answer = quiz.getAnswerOptions().stream()
-                        .filter(option -> option.getKeyValue().equals(quizAnswer.answerId()))
-                        .findFirst().orElseThrow(()->new NoSuchElementException("Answer id "+quizAnswer.answerId()+ " is not existed in quiz Id "+quizAnswer.quizId()));
-                QuizAttempt quizAttempt = new QuizAttempt();
-                quizAttempt.setQuiz(quiz);
-                quizAttempt.setAnswerId(quizAnswer.answerId());
-                quizAttempt.setAttemptTimestamp(currentTime);
-                quizAttempt.setUser(user);
-                quizAttempt.setCorrect(answer.getIsCorrect());
-                quizAttemptList.add(quizAttempt);
-            }
-        }
-        return quizAttemptRepository.saveAll(quizAttemptList).stream().map(quizAttemptMapper::toDto).toList();
+  public List<QuizAttemptResponseDto> checkAnswer(List<QuizAnswerDto> quizAnswers) {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    List<QuizAttemptResponseDto> result = new ArrayList<>();
+
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+      Long userId = customUserDetails.getUserId();
+      User user =
+          userRepository
+              .findById(userId)
+              .orElseThrow(() -> new NoSuchElementException("User not found"));
+      LocalDateTime currentTime = LocalDateTime.now();
+
+      for (QuizAnswerDto answer : quizAnswers) {
+        Long quizId = answer.quizId();
+        List<Integer> chosenAnswerIds = answer.answerIds();
+        Quiz quiz =
+            quizRepository
+                .findById(quizId)
+                .orElseThrow(
+                    () -> new NoSuchElementException("Quiz id " + quizId + " is not found"));
+        lessonService.checkGetPermission(quiz.getLesson().getCourse());
+
+        Set<Integer> correctAnswerIds =
+            quiz.getAnswerOptions().stream()
+                .filter(AnswerOption::getIsCorrect)
+                .map(AnswerOption::getKeyValue)
+                .collect(Collectors.toSet());
+
+        Set<Integer> chosenSet = new HashSet<>(chosenAnswerIds);
+
+        boolean isCorrect = chosenSet.equals(correctAnswerIds);
+
+        QuizAttempt quizAttempt = new QuizAttempt();
+        quizAttempt.setQuiz(quiz);
+        quizAttempt.setAnswerId(null); // Vì nhiều đáp án, có thể để null
+        quizAttempt.setAttemptTimestamp(currentTime);
+        quizAttempt.setUser(user);
+        quizAttempt.setCorrect(isCorrect);
+
+        quizAttemptRepository.save(quizAttempt);
+
+        QuizAttemptResponseDto responseDto =
+            new QuizAttemptResponseDto(quiz.getId(), userId, null, isCorrect, currentTime);
+        result.add(responseDto);
+      }
     }
+    return result;
+  }
 
     public  Map<Long, Map<LocalDateTime, List<QuizAttempt>>> getQuizAttempt(){
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

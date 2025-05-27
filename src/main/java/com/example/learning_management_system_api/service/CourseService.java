@@ -2,6 +2,7 @@ package com.example.learning_management_system_api.service;
 
 import com.example.learning_management_system_api.config.CustomUserDetails;
 import com.example.learning_management_system_api.dto.mapper.CourseMapper;
+import com.example.learning_management_system_api.dto.mapper.LessonMapper;
 import com.example.learning_management_system_api.dto.mapper.ReviewMapper;
 import com.example.learning_management_system_api.dto.mapper.StudentMapper;
 import com.example.learning_management_system_api.dto.response.CourseResponseDto;
@@ -13,17 +14,23 @@ import com.example.learning_management_system_api.entity.*;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.EnrollRepository;
 import com.example.learning_management_system_api.repository.InstructorRepository;
+import com.example.learning_management_system_api.repository.LessonCompletionRepository;
+import com.example.learning_management_system_api.repository.LessonRepository;
 import com.example.learning_management_system_api.repository.ReviewRepository;
+import com.example.learning_management_system_api.repository.StudentRepository;
 import com.example.learning_management_system_api.utils.enums.UserRole;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import lombok.SneakyThrows;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -36,7 +43,10 @@ public class CourseService implements ICourseService {
   private final ReviewRepository reviewRepository;
   private final ReviewMapper reviewMapper;
   private final InstructorRepository instructorRepository;
-  private final LessonService lessonService;
+  private final LessonRepository lessonRepository;
+  private final LessonCompletionRepository lessonCompletionRepository;
+  private final StudentRepository studentRepository;
+  private final LessonMapper lessonMapper;
 
   public CourseService(
       CourseRepository courseRepository,
@@ -46,7 +56,14 @@ public class CourseService implements ICourseService {
       ReviewRepository reviewRepository,
       ReviewMapper reviewMapper,
       InstructorRepository instructorRepository,
-      LessonService lessonService) {
+      LessonRepository lessonRepository,
+      LessonCompletionRepository lessonCompletionRepository,
+      StudentRepository studentRepository,
+      LessonMapper lessonMapper) {
+    this.lessonMapper = lessonMapper;
+    this.studentRepository = studentRepository;
+    this.lessonRepository = lessonRepository;
+    this.lessonCompletionRepository = lessonCompletionRepository;
     this.instructorRepository = instructorRepository;
     this.courseRepository = courseRepository;
     this.courseMapper = courseMapper;
@@ -54,7 +71,6 @@ public class CourseService implements ICourseService {
     this.enrollRepository = enrollRepository;
     this.reviewRepository = reviewRepository;
     this.reviewMapper = reviewMapper;
-    this.lessonService = lessonService;
   }
 
   // Return list of course with metadata about paging
@@ -65,33 +81,62 @@ public class CourseService implements ICourseService {
       String categoryName,
       Double price,
       Long instructorId,
-      CustomUserDetails userDetails) // Đổi tham số cuối!
-      {
-    User user = userDetails.getUser(); // Lấy thực thể User từ CustomUserDetails
-
-    UserRole role = user.getRole(); // hoặc user.getRole().name() nếu là Enum
-    Long userId = user.getId();
-
+      CustomUserDetails userDetails // Có thể null!
+      ) {
     Specification<Course> spec = courseFilter(courseName, categoryName, price, instructorId);
 
-    if (role == UserRole.Student) {
+    if (userDetails == null) {
+      // Chưa đăng nhập: chỉ trả về course đã duyệt
       spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), "APPROVED"));
-    } else if (role == UserRole.Instructor) {
-      // Đổi userId sang instructorId
-      Instructor instructor = instructorRepository.findByUserId(userId);
-      if (instructor == null)
-        throw new RuntimeException("Instructor not found for userId: " + userId);
-      spec =
-          spec.and(
-              (root, query, cb) -> cb.equal(root.get("instructor").get("id"), instructor.getId()));
-    }
+    } else {
+      User user = userDetails.getUser();
+      UserRole role = user.getRole();
+      Long userId = user.getId();
 
-    // Admin thì không cần filter thêm
+      if (role == UserRole.Student) {
+        spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), "APPROVED"));
+      } else if (role == UserRole.Instructor) {
+        // Instructor: chỉ trả về khóa học của instructor này
+        Instructor instructor = instructorRepository.findByUserId(userId);
+        if (instructor == null)
+          throw new RuntimeException("Instructor not found for userId: " + userId);
+        spec =
+            spec.and(
+                (root, query, cb) ->
+                    cb.equal(root.get("instructor").get("id"), instructor.getId()));
+      }
+      // Admin thì không cần filter thêm: trả về tất cả courses
+    }
 
     Page<Course> coursePage = courseRepository.findAll(spec, PageRequest.of(page, limit));
 
+    // Lấy rating trung bình cho từng khoá học
     List<CourseResponseDto> result =
-        coursePage.getContent().stream().map(courseMapper::toResponseDTO).toList();
+        coursePage.getContent().stream()
+            .map(
+                course -> {
+                  Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
+                  if (avgRating == null) avgRating = 0.0;
+                  return new CourseResponseDto(
+                      course.getId(),
+                      course.getInstructor().getUser().getFullname(),
+                      course.getCategory().getName(),
+                      course.getPrice(),
+                      course.getCreatedAt(),
+                      course.getUpdatedAt(),
+                      course.getThumbnail(),
+                      course.getStatus(),
+                      course.getName(),
+                      course.getCategory().getId(),
+                      course.getRejectedReason(),
+                      null, // lessons
+                      null, // completedLessons
+                      null, // totalLessons
+                      avgRating // rating\
+                      );
+                })
+            .toList();
+
     return new PageDto(
         coursePage.getNumber(),
         coursePage.getSize(),
@@ -107,8 +152,48 @@ public class CourseService implements ICourseService {
             .findById(id)
             .orElseThrow(
                 () -> new NoSuchElementException("Course with id " + id + " is not found"));
-    // Lấy danh sách bài học (KHÔNG check quyền)
-    List<LessonResponseDto> lessonList = lessonService.getAllLessons(course.getId(), null);
+
+    // Lấy tất cả bài học gốc (entity)
+    List<Lesson> lessonEntities = lessonRepository.findByCourse_Id(course.getId());
+
+    // Lấy thông tin student hiện tại
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    Long studentId = null;
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+      boolean isStudent =
+          customUserDetails.getAuthorities().stream()
+              .anyMatch(auth -> auth.getAuthority().equals("ROLE_Student"));
+      if (isStudent) {
+        Long userId = customUserDetails.getUserId();
+        Optional<Student> student = studentRepository.findByUserId(userId);
+        if (student.isPresent()) {
+          studentId = student.get().getId();
+        }
+      }
+    }
+
+    // Map từng lesson và đánh dấu completed cho từng lesson
+    List<LessonResponseDto> lessonList = new ArrayList<>();
+    for (Lesson lesson : lessonEntities) {
+      LessonResponseDto dto = lessonMapper.toDto(lesson);
+      if (studentId != null) {
+        boolean isCompleted =
+            lessonCompletionRepository.existsByStudentIdAndLessonId(studentId, lesson.getId());
+        dto.setCompleted(isCompleted);
+      } else {
+        dto.setCompleted(false);
+      }
+      lessonList.add(dto);
+    }
+
+    // Tính tổng số bài học và số đã hoàn thành
+    int totalLessons = lessonEntities.size();
+    int completedLessons = (int) lessonList.stream().filter(LessonResponseDto::isCompleted).count();
+
+    // Lấy rating trung bình (nếu không có thì trả về 0.0)
+    Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
+    if (avgRating == null) avgRating = 0.0;
 
     return new CourseResponseDto(
         course.getId(),
@@ -122,7 +207,11 @@ public class CourseService implements ICourseService {
         course.getName(),
         course.getCategory().getId(),
         course.getRejectedReason(),
-        lessonList);
+        lessonList,
+        completedLessons,
+        totalLessons,
+        avgRating // truyền rating cuối cùng
+        );
   }
 
   @Override

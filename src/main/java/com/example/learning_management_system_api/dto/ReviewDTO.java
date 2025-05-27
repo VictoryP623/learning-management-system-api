@@ -9,8 +9,14 @@ public record ReviewDTO(
     ReviewId id,
     @NotBlank(message = "Description is required") String description,
     LocalDateTime createdAt,
-    LocalDateTime updatedAt) {
+    LocalDateTime updatedAt,
+    Integer rating) {
   public ReviewDTO(Review review) {
-    this(review.getId(), review.getDescription(), review.getCreatedAt(), review.getUpdatedAt());
+    this(
+        review.getId(),
+        review.getDescription(),
+        review.getCreatedAt(),
+        review.getUpdatedAt(),
+        review.getRating());
   }
 }

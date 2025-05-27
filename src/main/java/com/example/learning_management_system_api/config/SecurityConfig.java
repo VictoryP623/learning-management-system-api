@@ -38,7 +38,8 @@ public class SecurityConfig {
           "/health/**",
           "/api/purchases/callback",
           "/api/test/firebase/**",
-          "/api/admin/register");
+          "/api/admin/register",
+          "/api/courses");
 
   @Bean
   public PasswordEncoder passwordEncoder() {

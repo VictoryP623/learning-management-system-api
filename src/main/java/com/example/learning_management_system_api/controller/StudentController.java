@@ -77,7 +77,8 @@ public class StudentController {
             new ReviewId(studentId, reviewDTO.id().getCourseId()),
             reviewDTO.description(),
             reviewDTO.createdAt(),
-            reviewDTO.updatedAt());
+            reviewDTO.updatedAt(),
+            reviewDTO.rating());
     return ResponseVO.success(studentService.submitReview(updatedReviewDTO));
   }
 
@@ -90,7 +91,8 @@ public class StudentController {
             new ReviewId(studentId, reviewDTO.id().getCourseId()),
             reviewDTO.description(),
             reviewDTO.createdAt(),
-            reviewDTO.updatedAt());
+            reviewDTO.updatedAt(),
+            reviewDTO.rating());
     return ResponseVO.success(studentService.updateReview(updatedReviewDTO));
   }
 
@@ -106,6 +108,14 @@ public class StudentController {
     Long studentId = getStudentIdFromAuthentication();
     ReviewId reviewId = new ReviewId(studentId, courseId);
     return ResponseVO.success(studentService.deleteReview(reviewId));
+  }
+
+  @GetMapping("/students/reviews/me/{courseId}")
+  @PreAuthorize("hasRole('ROLE_Student')")
+  public ResponseVO<ReviewDTO> getMyReviewByCourseId(@PathVariable Long courseId) {
+    Long studentId = getStudentIdFromAuthentication();
+    ReviewId reviewId = new ReviewId(studentId, courseId);
+    return ResponseVO.success(studentService.getReview(reviewId));
   }
 
   // UC13: Tìm kiếm giảng viên theo tên

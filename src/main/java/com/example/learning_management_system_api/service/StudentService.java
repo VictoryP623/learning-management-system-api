@@ -28,6 +28,8 @@ import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.EnrollRepository;
 import com.example.learning_management_system_api.repository.FollowRepository;
 import com.example.learning_management_system_api.repository.InstructorRepository;
+import com.example.learning_management_system_api.repository.LessonCompletionRepository;
+import com.example.learning_management_system_api.repository.LessonRepository;
 import com.example.learning_management_system_api.repository.ReportRepository;
 import com.example.learning_management_system_api.repository.ReviewRepository;
 import com.example.learning_management_system_api.repository.StudentRepository;
@@ -67,6 +69,10 @@ public class StudentService implements IStudentService {
 
   @Autowired private LessonService lessonService;
 
+  @Autowired private LessonRepository lessonRepository;
+
+  @Autowired private LessonCompletionRepository lessonCompletionRepository;
+
   @Override
   public Optional<Student> getStudentById(Long id) {
     return studentRepository.findByUserId(id);
@@ -86,7 +92,35 @@ public class StudentService implements IStudentService {
 
     List<CourseResponseDto> coursesDTOList =
         enrollPage.getContent().stream()
-            .map(enroll -> courseMapper.toResponseDTO(enroll.getCourse()))
+            .map(
+                enroll -> {
+                  Course course = enroll.getCourse();
+                  int totalLessons = (int) lessonRepository.countByCourseId(course.getId());
+                  int completedLessons =
+                      (int)
+                          lessonCompletionRepository.countByStudentIdAndLesson_Course_Id(
+                              studentId, course.getId());
+                  Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
+                  if (avgRating == null) avgRating = 0.0;
+
+                  return new CourseResponseDto(
+                      course.getId(),
+                      course.getInstructor().getUser().getFullname(),
+                      course.getCategory().getName(),
+                      course.getPrice(),
+                      course.getCreatedAt(),
+                      course.getUpdatedAt(),
+                      course.getThumbnail(),
+                      course.getStatus(),
+                      course.getName(),
+                      course.getCategory().getId(),
+                      course.getRejectedReason(),
+                      lessonService.getAllLessons(course.getId(), null),
+                      completedLessons,
+                      totalLessons,
+                      avgRating // <-- Thêm rating vào cuối
+                      );
+                })
             .toList();
 
     return new PageDto(
@@ -184,10 +218,20 @@ public class StudentService implements IStudentService {
       throw new NotFoundException("Student is not enrolled in the course");
     }
 
+    // **Check đã hoàn thành hết lesson chưa**
+    long totalLessons = lessonRepository.countByCourseId(reviewId.getCourseId());
+    long completedLessons =
+        lessonCompletionRepository.countByStudentIdAndLesson_Course_Id(
+            reviewId.getStudentId(), reviewId.getCourseId());
+    if (completedLessons < totalLessons) {
+      throw new IllegalStateException("Bạn phải hoàn thành tất cả bài học trước khi đánh giá.");
+    }
+
     // Tạo mới review
     Review review = reviewMapper.toEntity(reviewDTO);
     review.setStudent(student.get());
     review.setCourse(course.get());
+    review.setRating(reviewDTO.rating()); // nếu bạn thêm trường này
 
     Review savedReview = reviewRepository.save(review);
 
@@ -209,6 +253,10 @@ public class StudentService implements IStudentService {
     Review existingReview = optionalReview.get();
     if (reviewDTO.description() != null) {
       existingReview.setDescription(reviewDTO.description());
+    }
+    // **Thêm dòng này để cập nhật rating**
+    if (reviewDTO.rating() != null) {
+      existingReview.setRating(reviewDTO.rating());
     }
 
     // Lưu thay đổi

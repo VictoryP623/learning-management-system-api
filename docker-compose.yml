@@ -4,12 +4,6 @@ services:
       context: .
     restart: on-failure
     env_file: .env
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://gondola.proxy.rlwy.net:56453/railway?serverTimezone=Asia/Ho_Chi_Minh
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: mJigadclXgrPZdHbARfQMfrFrVRunLpT
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
     ports:
       - "${SPRING_LOCAL_PORT}:${SPRING_DOCKER_PORT}"
     networks:

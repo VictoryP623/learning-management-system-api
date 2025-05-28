@@ -11,5 +11,4 @@ COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
 
 # Giới hạn RAM JVM tối đa 256MB
-CMD ["java", "-Xmx512m", "-XX:+UseContainerSupport", "-jar", "app.jar"]
-
+CMD ["java", "-Xmx128m", "-XX:+UseContainerSupport", "-jar", "app.jar"]

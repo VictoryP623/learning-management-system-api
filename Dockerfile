@@ -9,4 +9,7 @@ FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
-CMD ["java", "-jar", "app.jar"]
+
+# Giới hạn RAM JVM tối đa 256MB
+CMD ["java", "-Xmx256m", "-XX:+UseContainerSupport", "-jar", "app.jar"]
+

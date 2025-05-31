@@ -8,6 +8,8 @@ import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.UserResponseDto;
 import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.exception.AppException;
+import com.example.learning_management_system_api.exception.BadRequestException;
+import com.example.learning_management_system_api.exception.NotFoundException;
 import com.example.learning_management_system_api.repository.UserRepository;
 import com.example.learning_management_system_api.utils.enums.UserRole;
 import java.util.List;
@@ -94,24 +96,24 @@ public class UserService implements IUserService {
 
   @Override
   public UserResponseDto updateUserStatus(UpdateUserStatusRequest request, Long id) {
-    // Find the user by ID
     Optional<User> optionalUser = userRepository.findById(id);
 
     if (optionalUser.isPresent()) {
       User user = optionalUser.get();
-      // Update the user's status
+
+      // Không cho phép thay đổi status nếu là Admin
+      if (user.getRole() == UserRole.Admin) {
+        throw new BadRequestException("Không thể thay đổi trạng thái của Admin!");
+      }
 
       if (request.getStatus() != null) {
         user.setStatus(request.getStatus());
-        userRepository.save(user); // Save the updated user
+        userRepository.save(user);
       }
       return userMapper.userToUserResponseDto(user);
 
-      // Map the updated user to UserResponseDto
-
     } else {
-      // Handle user not found (you could throw an exception or return a default response)
-      throw new RuntimeException("User not found");
+      throw new NotFoundException("User not found");
     }
   }
 

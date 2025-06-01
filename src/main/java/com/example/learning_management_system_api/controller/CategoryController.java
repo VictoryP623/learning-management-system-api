@@ -31,7 +31,7 @@ public class CategoryController {
   }
 
   @GetMapping("")
-  @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  //@PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseVO<PageDto> getAllCategories(
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "10") int limit,

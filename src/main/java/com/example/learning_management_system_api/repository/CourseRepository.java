@@ -1,11 +1,15 @@
 package com.example.learning_management_system_api.repository;
 
 import com.example.learning_management_system_api.entity.Course;
+import jakarta.persistence.LockModeType;
 import java.util.List;
+import java.util.Optional;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -34,4 +38,12 @@ public interface CourseRepository
   Page<Course> findByInstructorIdAndStatus(Long instructorId, String status, Pageable pageable);
 
   Page<Course> findByStatusAndCategoryId(String status, Long categoryId, Pageable pageable);
+
+  @Query("select c.instructor.id from Course c where c.id = :courseId")
+  Long findInstructorIdByCourseId(@Param("courseId") Long courseId);
+
+  // (Tuỳ chọn) Lock khi update status để tránh race-condition
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Course c where c.id = :id")
+  Optional<Course> findByIdForUpdate(@Param("id") Long id);
 }

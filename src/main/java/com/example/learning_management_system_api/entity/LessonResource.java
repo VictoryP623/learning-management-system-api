@@ -15,9 +15,19 @@ public class LessonResource {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
+  // Tên hiển thị "Slide chương 1", "Tài liệu PDF"
   private String name;
 
+  // Link file
   private String url;
+
+  // Loại file: PDF, PPT, DOCX, IMAGE, OTHER
+  @Column(name = "type")
+  private String type;
+
+  // Thứ tự hiển thị trong list tài liệu
+  @Column(name = "order_index")
+  private Integer orderIndex;
 
   @ManyToOne
   @JoinColumn(name = "lesson_id", referencedColumnName = "id")

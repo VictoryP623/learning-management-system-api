@@ -13,11 +13,16 @@ public class LessonResponseDto {
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
   private Boolean isFree;
-  private String resourceUrl;
+  private String resourceUrl; // videoUrl hoặc preview
   private Boolean completed;
+  private Integer orderIndex;
+  private Boolean locked;
+  private Long nextLessonId;
+  private Boolean nextLessonLocked;
+  private String nextLessonName;
 
-  public boolean isCompleted() { // Nếu dùng @Data thì Lombok sẽ tạo, nhưng tự viết ra để chắc chắn
-    return completed;
+  public boolean isCompleted() {
+    return completed != null && completed;
   }
 
   public void setCompleted(boolean completed) {

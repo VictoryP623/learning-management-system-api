@@ -15,12 +15,20 @@ services:
       - "${MYSQL_PORT}:3306"
     networks:
       - app-network
+    healthcheck:
+      # Sửa -proot -> -uroot, giữ -p${MYSQL_ROOT_PASSWORD}
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: lms-phpmyadmin
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: always
     environment:
       PMA_HOST: db
@@ -39,6 +47,12 @@ services:
     restart: on-failure
     env_file: .env
     environment:
+      # Dùng từ .env: SPRING_PROFILES_ACTIVE=dev
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
+
+      # FE origin cho CORS/CSP (map -> app.CLIENT_URL)
+      APP_CLIENT_URL: ${APP_CLIENT_URL}
+
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
@@ -55,10 +69,12 @@ services:
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID}
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET}
       FIREBASE_BUCKET: ${FIREBASE_BUCKET}
+      JAVA_OPTS: "-Xms256m -Xmx512m"
     ports:
       - "${SPRING_LOCAL_PORT}:${SPRING_DOCKER_PORT}"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - app-network
 

@@ -14,6 +14,7 @@ import com.example.learning_management_system_api.utils.enums.QuizType;
 import com.example.learning_management_system_api.utils.enums.UserRole;
 import lombok.SneakyThrows;
 import org.apache.coyote.BadRequestException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.example.learning_management_system_api.events.StudentEvents;
 
 @Service
 public class QuizService {
@@ -32,12 +34,19 @@ public class QuizService {
     private final LessonRepository lessonRepository;
     private final QuizMapper quizMapper;
     private final LessonService lessonService;
+    private final ApplicationEventPublisher publisher;
 
-    public QuizService(QuizRepository quizRepository, LessonRepository lessonRepository, QuizMapper quizMapper, LessonService lessonService) {
+    public QuizService(QuizRepository quizRepository,
+                       LessonRepository lessonRepository,
+                       QuizMapper quizMapper,
+                       LessonService lessonService,
+                       ApplicationEventPublisher publisher
+    ) {
         this.quizRepository = quizRepository;
         this.lessonRepository = lessonRepository;
         this.quizMapper = quizMapper;
         this.lessonService = lessonService;
+        this.publisher = publisher;
     }
 
     @SneakyThrows
@@ -58,7 +67,16 @@ public class QuizService {
 
         AtomicInteger counter = new AtomicInteger(1);
         quizEntity.getAnswerOptions().forEach(answerOption -> answerOption.setKeyValue(counter.getAndIncrement()));
-        return quizMapper.toDto(quizRepository.save(quizEntity));
+
+        Quiz saved = quizRepository.save(quizEntity);
+
+        // publish QuizPublished (coi create là publish/mở)
+        Long courseId = saved.getLesson().getCourse().getId();
+        publisher.publishEvent(new StudentEvents.QuizPublishedEvent(
+            courseId, saved.getId()
+        ));
+
+        return quizMapper.toDto(saved);
     }
 
     public QuizResponseDto getQuizById(Long id) {

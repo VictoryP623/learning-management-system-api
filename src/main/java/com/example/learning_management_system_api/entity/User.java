@@ -17,23 +17,27 @@ public class User {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(nullable = false, unique = true)
+  @Column(nullable = false, unique = true, length = 255)
   private String email;
 
   private String googleId;
 
+  @Column(length = 255)
   private String password;
 
   private LocalDateTime birthdate;
 
+  @Column(length = 255)
   private String address;
 
+  @Column(length = 150)
   private String fullname;
 
   @Enumerated(EnumType.STRING)
+  @Column(length = 30)
   private UserRole role;
 
-  @Column(name = "refresh_token")
+  @Column(name = "refresh_token", columnDefinition = "TEXT")
   private String refreshToken;
 
   @Column(name = "verification_code", length = 64)

@@ -26,12 +26,16 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import lombok.SneakyThrows;
+import org.springframework.context.ApplicationEventPublisher; // NEW
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+
+import com.example.learning_management_system_api.events.StudentEvents;
+import com.example.learning_management_system_api.events.InstructorEvents;
 
 @Service
 public class CourseService implements ICourseService {
@@ -47,6 +51,7 @@ public class CourseService implements ICourseService {
   private final LessonCompletionRepository lessonCompletionRepository;
   private final StudentRepository studentRepository;
   private final LessonMapper lessonMapper;
+  private final ApplicationEventPublisher publisher;
 
   public CourseService(
       CourseRepository courseRepository,
@@ -59,7 +64,9 @@ public class CourseService implements ICourseService {
       LessonRepository lessonRepository,
       LessonCompletionRepository lessonCompletionRepository,
       StudentRepository studentRepository,
-      LessonMapper lessonMapper) {
+      LessonMapper lessonMapper,
+      ApplicationEventPublisher publisher
+  ) {
     this.lessonMapper = lessonMapper;
     this.studentRepository = studentRepository;
     this.lessonRepository = lessonRepository;
@@ -71,6 +78,7 @@ public class CourseService implements ICourseService {
     this.enrollRepository = enrollRepository;
     this.reviewRepository = reviewRepository;
     this.reviewMapper = reviewMapper;
+    this.publisher = publisher;
   }
 
   // Return list of course with metadata about paging
@@ -291,6 +299,9 @@ public class CourseService implements ICourseService {
             .orElseThrow(
                 () -> new IllegalArgumentException("Course not found with id: " + courseId));
 
+    // giữ trạng thái cũ
+    String oldStatus = course.getStatus();
+
     if ("APPROVED".equalsIgnoreCase(status)) {
       course.setStatus("APPROVED");
     } else if ("REJECTED".equalsIgnoreCase(status)) {
@@ -301,6 +312,21 @@ public class CourseService implements ICourseService {
     }
 
     courseRepository.save(course);
+
+    // publish cho Instructor (kết quả duyệt)
+    Long instructorId = course.getInstructor() != null ? course.getInstructor().getId() : null;
+    if (instructorId != null) {
+      publisher.publishEvent(new InstructorEvents.CourseReviewOutcomeEvent(
+          course.getId(), instructorId, course.getStatus()
+      ));
+    }
+
+    // publish cho Student (khoá đổi trạng thái)
+    publisher.publishEvent(new StudentEvents.CourseStatusChangedEvent(
+        course.getId(),
+        oldStatus == null ? "UNKNOWN" : oldStatus,
+        course.getStatus()
+    ));
 
     return courseMapper.toResponseDTO(course);
   }

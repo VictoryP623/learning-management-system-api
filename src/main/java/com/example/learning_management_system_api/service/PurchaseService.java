@@ -23,6 +23,7 @@ import com.paypal.api.payments.*;
 import com.paypal.base.rest.APIContext;
 import com.paypal.base.rest.PayPalRESTException;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PurchaseService {
+  @Autowired private NotificationFacade notificationFacade;
 
   @Value("${paypal.client.id}")
   private String clientId;
@@ -183,7 +185,46 @@ public class PurchaseService {
           enrollRepository.save(enroll);
         }
       }
-      // ====================================================
+      // gửi notif cho student + instructor
+      try {
+        // Lấy userId student
+        Long studentUserId =
+            (purchase.getStudent() != null && purchase.getStudent().getUser() != null)
+                ? purchase.getStudent().getUser().getId()
+                : null;
+
+        if (studentUserId != null) {
+          // Mã đơn (nếu có orderCode riêng thì thay ở đây)
+          String orderCode = String.valueOf(purchase.getId());
+
+          // Danh sách tên khóa học (Course dùng field "name")
+          java.util.List<String> courseTitles =
+              purchase.getCourses() == null
+                  ? java.util.List.of()
+                  : purchase.getCourses().stream()
+                      .map(c -> c.getName() == null ? ("Course " + c.getId()) : c.getName())
+                      .toList();
+
+          // (1) Thông báo cho student
+          notificationFacade.purchaseSucceededStudent(studentUserId, orderCode, courseTitles);
+
+          // (2) Thông báo cho instructor của từng course
+          String studentName =
+              (purchase.getStudent() != null && purchase.getStudent().getUser() != null)
+                  ? purchase.getStudent().getUser().getFullname()
+                  : "A student";
+
+          if (purchase.getCourses() != null) {
+            purchase
+                .getCourses()
+                .forEach(
+                    c -> {
+                      notificationFacade.purchaseNotifyInstructor(c, studentUserId, studentName);
+                    });
+          }
+        }
+      } catch (Exception ignore) {
+      }
     } else {
       throw new RuntimeException("Payment not approved");
     }

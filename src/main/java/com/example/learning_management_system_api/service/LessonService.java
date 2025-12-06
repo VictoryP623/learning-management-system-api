@@ -10,6 +10,7 @@ import com.example.learning_management_system_api.entity.LessonCompletion;
 import com.example.learning_management_system_api.entity.LessonResource;
 import com.example.learning_management_system_api.entity.Purchase;
 import com.example.learning_management_system_api.entity.Student;
+import com.example.learning_management_system_api.events.StudentEvents;
 import com.example.learning_management_system_api.exception.AppException;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.LessonCompletionRepository;
@@ -19,12 +20,15 @@ import com.example.learning_management_system_api.repository.PurchaseRepository;
 import com.example.learning_management_system_api.repository.QuizAttemptRepository;
 import com.example.learning_management_system_api.repository.QuizRepository;
 import com.example.learning_management_system_api.repository.StudentRepository;
+import com.example.learning_management_system_api.utils.enums.LessonProgressStatus;
+import com.example.learning_management_system_api.utils.enums.LessonUnlockType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.SneakyThrows;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -44,6 +48,7 @@ public class LessonService implements ILessonService {
   private final LessonCompletionRepository lessonCompletionRepository;
   private final StudentRepository studentRepository;
   private final LessonResourceService lessonResourceService;
+  private final ApplicationEventPublisher publisher;
 
   public LessonService(
       LessonRepository lessonRepository,
@@ -55,7 +60,8 @@ public class LessonService implements ILessonService {
       QuizAttemptRepository quizAttemptRepository,
       LessonCompletionRepository lessonCompletionRepository,
       StudentRepository studentRepository,
-      LessonResourceService lessonResourceService) {
+      LessonResourceService lessonResourceService,
+      ApplicationEventPublisher publisher) {
     this.lessonResourceService = lessonResourceService;
     this.studentRepository = studentRepository;
     this.lessonCompletionRepository = lessonCompletionRepository;
@@ -66,6 +72,7 @@ public class LessonService implements ILessonService {
     this.lessonResourceRepository = lessonResourceRepository;
     this.quizRepository = quizRepository;
     this.quizAttemptRepository = quizAttemptRepository;
+    this.publisher = publisher;
   }
 
   public LessonResponseDto createLesson(LessonRequestDto requestDTO) {
@@ -76,6 +83,7 @@ public class LessonService implements ILessonService {
                 () ->
                     new NoSuchElementException(
                         "Course not found with ID: " + requestDTO.courseId()));
+
     if (lessonRepository.existsByNameAndCourseId(requestDTO.name(), requestDTO.courseId())) {
       throw new DuplicateKeyException(
           "There is already a lesson with the name '"
@@ -83,12 +91,31 @@ public class LessonService implements ILessonService {
               + "' in course ID: "
               + requestDTO.courseId());
     }
+
     checkPermission(course);
+
     Lesson lesson = lessonMapper.toEntity(requestDTO);
     lesson.setCourse(course);
     lesson.setIsFree(requestDTO.isFree());
-    lesson.setResourceUrl(requestDTO.resourceUrl());
+    lesson.setVideoUrl(requestDTO.resourceUrl()); // dùng resourceUrl từ request làm videoUrl chính
+
+    long count = lessonRepository.countByCourseId(course.getId());
+    lesson.setOrderIndex((int) count + 1);
+
+    if (lesson.getUnlockType() == null) {
+      lesson.setUnlockType(LessonUnlockType.NONE);
+    }
+
     Lesson savedLesson = lessonRepository.save(lesson);
+
+    // publish LessonCreated
+    Long courseId = savedLesson.getCourse().getId();
+    Long instructorId =
+        savedLesson.getCourse().getInstructor() != null
+            ? savedLesson.getCourse().getInstructor().getId()
+            : null;
+    publisher.publishEvent(
+        new StudentEvents.LessonCreatedEvent(courseId, savedLesson.getId(), instructorId));
 
     return lessonMapper.toDto(savedLesson);
   }
@@ -98,18 +125,57 @@ public class LessonService implements ILessonService {
         lessonRepository
             .findById(id)
             .orElseThrow(() -> new NoSuchElementException("Lesson not found with ID: " + id));
+
     checkGetPermission(lesson.getCourse());
-    return lessonMapper.toDto(lesson);
+
+    LessonResponseDto dto = lessonMapper.toDto(lesson);
+
+    // Lấy thông tin student hiện tại (nếu có)
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+
+      Long userId = customUserDetails.getUserId();
+      Student student = studentRepository.findByUserId(userId).orElse(null);
+
+      if (student != null) {
+        Long studentId = student.getId();
+
+        boolean completed = lessonCompletionRepository.existsByStudentIdAndLessonId(studentId, id);
+        dto.setCompleted(completed);
+
+        boolean canAccess = canAccessLesson(studentId, lesson);
+        dto.setLocked(!canAccess);
+      }
+    }
+
+    return dto;
   }
 
   public List<LessonResponseDto> getAllLessons(Long courseId, String name) {
     List<Lesson> lessonList =
         lessonRepository.findByCourse_IdAndNameContaining(courseId, name == null ? "" : name);
 
+    // Lấy studentId hiện tại (nếu có) để set completed + locked
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    Long currentStudentId = null;
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+      Long userId = customUserDetails.getUserId();
+      Student student = studentRepository.findByUserId(userId).orElse(null);
+      if (student != null) {
+        currentStudentId = student.getId();
+      }
+    }
+
+    Long finalCurrentStudentId = currentStudentId;
+
     return lessonList.stream()
         .map(
             lesson -> {
               LessonResponseDto dto = lessonMapper.toDto(lesson);
+
+              // free preview: nếu là bài free thì lấy 1 resource (mp4) làm preview
               if (Boolean.TRUE.equals(lesson.getIsFree())) {
                 List<LessonResource> resources =
                     lessonResourceRepository.findByLessonId(lesson.getId());
@@ -123,8 +189,21 @@ public class LessonService implements ILessonService {
                   dto.setResourceUrl(videoResource.getUrl());
                 }
               } else {
+                // với học viên đã mua, FE khi gọi getLessonById sẽ lấy videoUrl đầy đủ
                 dto.setResourceUrl(null);
               }
+
+              // set trạng thái completed + locked nếu là student
+              if (finalCurrentStudentId != null) {
+                boolean completed =
+                    lessonCompletionRepository.existsByStudentIdAndLessonId(
+                        finalCurrentStudentId, lesson.getId());
+                dto.setCompleted(completed);
+
+                boolean canAccess = canAccessLesson(finalCurrentStudentId, lesson);
+                dto.setLocked(!canAccess);
+              }
+
               return dto;
             })
         .collect(Collectors.toList());
@@ -151,11 +230,13 @@ public class LessonService implements ILessonService {
       checkPermission(course);
       lesson.setCourse(course);
     }
-    // Cập nhật isFree và resourceUrl
+
+    // Cập nhật isFree và videoUrl
     lesson.setIsFree(requestDTO.isFree());
     if (requestDTO.resourceUrl() != null) {
-      lesson.setResourceUrl(requestDTO.resourceUrl());
+      lesson.setVideoUrl(requestDTO.resourceUrl());
     }
+
     // Kiểm tra tên bài học bị trùng trong khóa học
     if (requestDTO.name() != null) {
       if (lessonRepository.existsByNameAndCourseIdAndIdNot(
@@ -169,6 +250,12 @@ public class LessonService implements ILessonService {
     }
 
     Lesson updatedLesson = lessonRepository.save(lesson);
+
+    // publish LessonUpdated
+    publisher.publishEvent(
+        new StudentEvents.LessonUpdatedEvent(
+            updatedLesson.getCourse().getId(), updatedLesson.getId()));
+
     return lessonMapper.toDto(updatedLesson);
   }
 
@@ -250,24 +337,80 @@ public class LessonService implements ILessonService {
     }
   }
 
-  public void markLessonCompleted(Long studentId, Long lessonId) {
-    if (lessonCompletionRepository.existsByStudentIdAndLessonId(studentId, lessonId))
-      throw new IllegalStateException("Already completed this lesson");
+  /** Kiểm tra rule mở khóa bài học cho 1 student */
+  public boolean canAccessLesson(Long studentId, Lesson lesson) {
+
+    LessonUnlockType type = lesson.getUnlockType();
+
+    if (type == null || type == LessonUnlockType.NONE) {
+      return true;
+    }
+
+    if (type == LessonUnlockType.PREVIOUS_COMPLETED) {
+      Lesson previous =
+          lessonRepository.findFirstByCourse_IdAndOrderIndexLessThanOrderByOrderIndexDesc(
+              lesson.getCourse().getId(), lesson.getOrderIndex());
+
+      if (previous == null) {
+        return true; // bài đầu tiên
+      }
+
+      return lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
+          studentId, previous.getId(), LessonProgressStatus.COMPLETED);
+    }
+
+    if (type == LessonUnlockType.SPECIFIC_LESSON_COMPLETED) {
+      if (lesson.getRequiredLessonId() == null) return true;
+
+      return lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
+          studentId, lesson.getRequiredLessonId(), LessonProgressStatus.COMPLETED);
+    }
+
+    return true;
+  }
+
+  /** Hoàn thành bài học + trả về info bài tiếp theo (auto-play) */
+  public LessonResponseDto completeLesson(Long studentId, Long lessonId) {
 
     Lesson lesson =
         lessonRepository
             .findById(lessonId)
             .orElseThrow(() -> new NoSuchElementException("Lesson not found"));
+
     Student student =
         studentRepository
             .findById(studentId)
             .orElseThrow(() -> new NoSuchElementException("Student not found"));
 
-    LessonCompletion completion = new LessonCompletion();
-    completion.setLesson(lesson);
-    completion.setStudent(student);
-    completion.setCompletedAt(LocalDateTime.now());
+    LessonCompletion completion =
+        lessonCompletionRepository.findByStudentIdAndLessonId(studentId, lessonId);
 
+    if (completion == null) {
+      completion = new LessonCompletion();
+      completion.setLesson(lesson);
+      completion.setStudent(student);
+    }
+
+    completion.setStatus(LessonProgressStatus.COMPLETED);
+    completion.setCompletedAt(LocalDateTime.now());
+    completion.setWatchedSeconds(lesson.getDurationSec());
     lessonCompletionRepository.save(completion);
+
+    LessonResponseDto response = lessonMapper.toDto(lesson);
+    response.setCompleted(true);
+
+    // Tìm bài tiếp theo trong course
+    Lesson next =
+        lessonRepository.findFirstByCourse_IdAndOrderIndexGreaterThanOrderByOrderIndexAsc(
+            lesson.getCourse().getId(), lesson.getOrderIndex());
+
+    if (next != null) {
+      boolean canAccessNext = canAccessLesson(studentId, next);
+      response.setNextLessonId(canAccessNext ? next.getId() : null);
+      response.setNextLessonLocked(!canAccessNext);
+      response.setNextLessonName(next.getName());
+    }
+
+    return response;
   }
 }

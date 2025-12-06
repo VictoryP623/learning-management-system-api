@@ -10,6 +10,7 @@ import com.example.learning_management_system_api.dto.response.LoginResponse;
 import com.example.learning_management_system_api.entity.Instructor;
 import com.example.learning_management_system_api.entity.Student;
 import com.example.learning_management_system_api.entity.User;
+import com.example.learning_management_system_api.events.AdminEvents;
 import com.example.learning_management_system_api.exception.AppException;
 import com.example.learning_management_system_api.repository.InstructorRepository;
 import com.example.learning_management_system_api.repository.StudentRepository;
@@ -24,6 +25,7 @@ import java.util.Base64;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -51,6 +53,10 @@ public class AuthenticationService implements IAuthenticationService {
   @Autowired private AuthenticationManager authenticationManager;
 
   @Autowired private GoogleOAuthApiClient googleOAuthApiClient;
+
+  @Autowired private NotificationFacade notificationFacade;
+
+  @Autowired private ApplicationEventPublisher publisher;
 
   @Value("${app.CLIENT_URL:localhost}")
   private String CLIENT_URL;
@@ -86,6 +92,12 @@ public class AuthenticationService implements IAuthenticationService {
       Instructor instructor = new Instructor();
       instructor.setUser(user);
       instructorRepository.save(instructor);
+
+      // publish cho Admin – có instructor mới chờ duyệt
+      try {
+        publisher.publishEvent(new AdminEvents.NewInstructorPendingEvent(instructor.getId()));
+      } catch (Exception ignore) {
+      }
     }
 
     try {
@@ -111,6 +123,11 @@ public class AuthenticationService implements IAuthenticationService {
 
     emailService.sendHtmlEmail(
         request.getEmail(), "Confirm your email address", "verification-email", context);
+
+    try {
+      notificationFacade.welcomeOnRegister(user.getId());
+    } catch (Exception ignore) {
+    }
 
     return "Registration successful. Please check your email to complete account verification.";
   }
@@ -397,6 +414,12 @@ public class AuthenticationService implements IAuthenticationService {
         Instructor instructor = new Instructor();
         instructor.setUser(user);
         instructorRepository.save(instructor);
+
+        // publish cho Admin – có instructor mới chờ duyệt (đăng ký qua Google)
+        try {
+          publisher.publishEvent(new AdminEvents.NewInstructorPendingEvent(instructor.getId()));
+        } catch (Exception ignore) {
+        }
       }
     }
     String jwtAccessToken = jwtUtils.generateAccessToken(user);

@@ -19,7 +19,6 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/lessons")
-// @CrossOrigin(origins = "http://localhost:3000")
 public class LessonController {
 
   private final ILessonService lessonService;
@@ -30,7 +29,7 @@ public class LessonController {
       ILessonService lessonService,
       StudentRepository studentRepository,
       LessonService lessonServiceImpl) {
-    this.lessonService = lessonServiceImpl;
+    this.lessonService = lessonServiceImpl; // dùng implement
     this.studentRepository = studentRepository;
     this.lessonServiceImpl = lessonServiceImpl;
   }
@@ -66,7 +65,6 @@ public class LessonController {
     return ResponseEntity.ok(lessonResponse);
   }
 
-  // Delete a lesson by ID
   @PreAuthorize("hasRole('ROLE_Instructor')")
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> deleteLesson(@PathVariable Long id) {
@@ -77,19 +75,19 @@ public class LessonController {
   @PostMapping("/{lessonId}/complete")
   @PreAuthorize("hasRole('ROLE_Student')")
   public ResponseEntity<?> markLessonCompleted(@PathVariable Long lessonId) {
-    // Lấy studentId từ Security
     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
     if (auth == null || !(auth.getPrincipal() instanceof CustomUserDetails customUserDetails)) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Not authenticated");
     }
     Long userId = customUserDetails.getUserId();
-    // Lấy studentId từ userId
+
     Long studentId =
         studentRepository
             .findByUserId(userId)
             .map(Student::getId)
             .orElseThrow(() -> new RuntimeException("Student not found for userId: " + userId));
-    lessonServiceImpl.markLessonCompleted(studentId, lessonId);
-    return ResponseEntity.ok("Lesson marked as completed");
+
+    LessonResponseDto response = lessonServiceImpl.completeLesson(studentId, lessonId);
+    return ResponseEntity.ok(response);
   }
 }

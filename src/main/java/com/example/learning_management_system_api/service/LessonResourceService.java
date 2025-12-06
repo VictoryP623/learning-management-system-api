@@ -44,11 +44,9 @@ public class LessonResourceService {
           "image/webp", // WEBP format
           "application/pdf", // PDF format
           "application/msword", // Microsoft Word (.doc)
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // Microsoft
-          // Word (.docx)
-          "application/vnd.ms-excel", // Microsoft Excel (.xls)
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // Microsoft Excel
-          // (.xlsx)
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+          "application/vnd.ms-excel", // .xls
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
           );
 
   @Value("${firebase.bucket}")
@@ -88,7 +86,7 @@ public class LessonResourceService {
             .findById(lessonId)
             .orElseThrow(() -> new NoSuchElementException("Lesson not found"));
 
-    // Xoá resource cũ (nếu lesson đã có)
+    // Xoá resource cũ (nếu lesson đã có) – nếu bạn muốn cho nhiều tài liệu thì bỏ đoạn này
     List<LessonResource> oldResources = lessonResourceRepository.findByLessonId(lessonId);
     for (LessonResource r : oldResources) {
       if (r.getUrl() != null && !r.getUrl().isEmpty()) {
@@ -118,10 +116,7 @@ public class LessonResourceService {
     lessonResource.setLesson(lesson);
     lessonResource.setName(resourceName);
     lessonResource.setUrl(url);
-
-    // Cập nhật trường resourceUrl của lesson
-    lesson.setResourceUrl(url);
-    lessonRepository.save(lesson);
+    // nếu bạn đã thêm type/orderIndex trong LessonResource thì có thể set ở đây
 
     return lessonResourceMapper.toDto(lessonResourceRepository.save(lessonResource));
   }
@@ -138,21 +133,11 @@ public class LessonResourceService {
       throw new RuntimeException("Error while delete file from Firebase. Please try again later");
     }
 
-    // Lấy lesson liên quan
-    Lesson lesson = lessonResource.getLesson();
-
     // Xóa resource trong DB
     lessonResourceRepository.delete(lessonResource);
 
-    // Kiểm tra lesson còn resource nào không
-    List<LessonResource> remain = lessonResourceRepository.findByLessonId(lesson.getId());
-    if (remain.isEmpty()) {
-      lesson.setResourceUrl(null);
-    } else {
-      // Nếu cho phép nhiều resource thì lấy 1 cái để set, nhưng flow hiện tại là 1 resource
-      lesson.setResourceUrl(remain.get(0).getUrl());
-    }
-    lessonRepository.save(lesson);
+    // Không cần đụng tới Lesson.videoUrl nữa
+    // (attachments tách riêng, video chính set qua LessonRequestDto)
   }
 
   public PageDto getAllLessonResource(Long lessonId, int page, int size) {

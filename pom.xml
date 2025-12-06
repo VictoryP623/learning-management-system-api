@@ -6,8 +6,8 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.4.0</version>
-		<relativePath /> <!-- lookup parent from repository -->
+		<version>3.3.4</version>
+		<relativePath />
 	</parent>
 	<groupId>com.example</groupId>
 	<artifactId>learning-management-system-api</artifactId>
@@ -163,6 +163,29 @@
 			<artifactId>rest-api-sdk</artifactId>
 			<version>1.14.0</version>
 		</dependency>
+
+		<!-- Swagger / OpenAPI UI -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>2.5.0</version>
+		</dependency>
+
+		<!-- Actuator (health/info/metrics…) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-websocket</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		
 	</dependencies>
 
 	<build>

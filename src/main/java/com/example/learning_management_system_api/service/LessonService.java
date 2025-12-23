@@ -108,7 +108,6 @@ public class LessonService implements ILessonService {
 
     Lesson savedLesson = lessonRepository.save(lesson);
 
-    // publish LessonCreated
     Long courseId = savedLesson.getCourse().getId();
     Long instructorId =
         savedLesson.getCourse().getInstructor() != null
@@ -130,7 +129,6 @@ public class LessonService implements ILessonService {
 
     LessonResponseDto dto = lessonMapper.toDto(lesson);
 
-    // Lấy thông tin student hiện tại (nếu có)
     Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
     if (authentication != null
         && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
@@ -140,8 +138,9 @@ public class LessonService implements ILessonService {
 
       if (student != null) {
         Long studentId = student.getId();
-
-        boolean completed = lessonCompletionRepository.existsByStudentIdAndLessonId(studentId, id);
+        boolean completed =
+            lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
+                studentId, id, LessonProgressStatus.COMPLETED);
         dto.setCompleted(completed);
 
         boolean canAccess = canAccessLesson(studentId, lesson);
@@ -156,7 +155,6 @@ public class LessonService implements ILessonService {
     List<Lesson> lessonList =
         lessonRepository.findByCourse_IdAndNameContaining(courseId, name == null ? "" : name);
 
-    // Lấy studentId hiện tại (nếu có) để set completed + locked
     Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
     Long currentStudentId = null;
     if (authentication != null
@@ -175,10 +173,10 @@ public class LessonService implements ILessonService {
             lesson -> {
               LessonResponseDto dto = lessonMapper.toDto(lesson);
 
-              // free preview: nếu là bài free thì lấy 1 resource (mp4) làm preview
               if (Boolean.TRUE.equals(lesson.getIsFree())) {
                 List<LessonResource> resources =
-                    lessonResourceRepository.findByLessonId(lesson.getId());
+                    lessonResourceRepository.findByLesson_IdOrderByOrderIndexAsc(lesson.getId());
+
                 if (!resources.isEmpty()) {
                   LessonResource videoResource =
                       resources.stream()
@@ -189,15 +187,13 @@ public class LessonService implements ILessonService {
                   dto.setResourceUrl(videoResource.getUrl());
                 }
               } else {
-                // với học viên đã mua, FE khi gọi getLessonById sẽ lấy videoUrl đầy đủ
                 dto.setResourceUrl(null);
               }
 
-              // set trạng thái completed + locked nếu là student
               if (finalCurrentStudentId != null) {
                 boolean completed =
-                    lessonCompletionRepository.existsByStudentIdAndLessonId(
-                        finalCurrentStudentId, lesson.getId());
+                    lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
+                        finalCurrentStudentId, lesson.getId(), LessonProgressStatus.COMPLETED);
                 dto.setCompleted(completed);
 
                 boolean canAccess = canAccessLesson(finalCurrentStudentId, lesson);
@@ -218,7 +214,6 @@ public class LessonService implements ILessonService {
     lessonMapper.updateLessonEntity(requestDTO, lesson);
     checkPermission(lesson.getCourse());
 
-    // Cập nhật course nếu có thay đổi
     if (requestDTO.courseId() != null) {
       Course course =
           courseRepository
@@ -231,13 +226,11 @@ public class LessonService implements ILessonService {
       lesson.setCourse(course);
     }
 
-    // Cập nhật isFree và videoUrl
     lesson.setIsFree(requestDTO.isFree());
     if (requestDTO.resourceUrl() != null) {
       lesson.setVideoUrl(requestDTO.resourceUrl());
     }
 
-    // Kiểm tra tên bài học bị trùng trong khóa học
     if (requestDTO.name() != null) {
       if (lessonRepository.existsByNameAndCourseIdAndIdNot(
           requestDTO.name(), lesson.getCourse().getId(), lesson.getId())) {
@@ -251,7 +244,6 @@ public class LessonService implements ILessonService {
 
     Lesson updatedLesson = lessonRepository.save(lesson);
 
-    // publish LessonUpdated
     publisher.publishEvent(
         new StudentEvents.LessonUpdatedEvent(
             updatedLesson.getCourse().getId(), updatedLesson.getId()));
@@ -267,15 +259,13 @@ public class LessonService implements ILessonService {
             .orElseThrow(() -> new NoSuchElementException("Lesson not found with ID: " + id));
     checkPermission(lesson.getCourse());
 
-    // Xóa bảng phụ liên quan quiz
     quizAttemptRepository.deleteByLessonId(id);
     quizRepository.deleteByLessonId(id);
 
-    // Xóa resource liên quan
-    List<LessonResource> resources = lessonResourceRepository.findByLessonId(id);
+    List<LessonResource> resources =
+        lessonResourceRepository.findByLesson_IdOrderByOrderIndexAsc(id);
     for (LessonResource r : resources) {
       if (r.getUrl() != null) {
-        // XÓA FILE TRÊN FIREBASE
         lessonResourceService.deleteFileFromFirebase(r.getUrl());
       }
       lessonResourceRepository.delete(r);
@@ -306,17 +296,12 @@ public class LessonService implements ILessonService {
         && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
       Long userId = customUserDetails.getUserId();
 
-      // Admin
       if (customUserDetails.getAuthorities().stream()
           .anyMatch(auth -> auth.getAuthority().equals("ROLE_Admin"))) {
         isAllowed = true;
-      }
-      // Owner
-      else if (userId.equals(course.getInstructor().getUser().getId())) {
+      } else if (userId.equals(course.getInstructor().getUser().getId())) {
         isAllowed = true;
-      }
-      // Check if this user have purchased
-      else {
+      } else {
         List<Purchase> purchaseList =
             purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(userId);
         List<Course> boughtCourse =
@@ -337,7 +322,6 @@ public class LessonService implements ILessonService {
     }
   }
 
-  /** Kiểm tra rule mở khóa bài học cho 1 student */
   public boolean canAccessLesson(Long studentId, Lesson lesson) {
 
     LessonUnlockType type = lesson.getUnlockType();
@@ -352,7 +336,7 @@ public class LessonService implements ILessonService {
               lesson.getCourse().getId(), lesson.getOrderIndex());
 
       if (previous == null) {
-        return true; // bài đầu tiên
+        return true;
       }
 
       return lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
@@ -369,7 +353,6 @@ public class LessonService implements ILessonService {
     return true;
   }
 
-  /** Hoàn thành bài học + trả về info bài tiếp theo (auto-play) */
   public LessonResponseDto completeLesson(Long studentId, Long lessonId) {
 
     Lesson lesson =
@@ -389,6 +372,8 @@ public class LessonService implements ILessonService {
       completion = new LessonCompletion();
       completion.setLesson(lesson);
       completion.setStudent(student);
+      // optional: nếu muốn ghi nhận started:
+      // completion.setStatus(LessonProgressStatus.IN_PROGRESS);
     }
 
     completion.setStatus(LessonProgressStatus.COMPLETED);
@@ -399,7 +384,6 @@ public class LessonService implements ILessonService {
     LessonResponseDto response = lessonMapper.toDto(lesson);
     response.setCompleted(true);
 
-    // Tìm bài tiếp theo trong course
     Lesson next =
         lessonRepository.findFirstByCourse_IdAndOrderIndexGreaterThanOrderByOrderIndexAsc(
             lesson.getCourse().getId(), lesson.getOrderIndex());
@@ -413,4 +397,60 @@ public class LessonService implements ILessonService {
 
     return response;
   }
+
+  // @Transactional
+  // public LessonResponseDto uploadLessonVideo(
+  //     Long lessonId, org.springframework.web.multipart.MultipartFile video, Integer durationSec)
+  // {
+
+  //   Lesson lesson =
+  //       lessonRepository
+  //           .findById(lessonId)
+  //           .orElseThrow(() -> new NoSuchElementException("Lesson not found with ID: " +
+  // lessonId));
+
+  //   checkPermission(lesson.getCourse());
+
+  //   String contentType = video.getContentType();
+  //   if (contentType == null || !contentType.equals("video/mp4")) {
+  //     throw new AppException(415, "Only mp4 video is allowed");
+  //   }
+  //   if (durationSec != null && durationSec < 1) {
+  //     throw new AppException(400, "durationSec must be >= 1");
+  //   }
+
+  //   String oldUrl = lesson.getVideoUrl();
+
+  //   String fileName = UUID.randomUUID() + ".mp4";
+  //   fileName = "lesson-videos/" + fileName;
+
+  //   String newUrl;
+  //   try {
+  //     newUrl = lessonResourceService.uploadFileToFirebase(video, fileName);
+  //   } catch (Exception e) {
+  //     throw new AppException(500, "Upload video failed");
+  //   }
+
+  //   lesson.setVideoUrl(newUrl);
+  //   lesson.setDurationSec(durationSec);
+
+  //   Lesson saved = lessonRepository.save(lesson);
+
+  //   // Auto-delete old video ONLY if it is a Firebase URL (avoid deleting external links)
+  //   if (oldUrl != null
+  //       && !oldUrl.isBlank()
+  //       && oldUrl.startsWith("https://firebasestorage.googleapis.com/")) {
+  //     try {
+  //       lessonResourceService.deleteFileFromFirebase(oldUrl);
+  //     } catch (Exception ex) {
+  //       // Best-effort: không fail request
+  //     }
+  //   }
+
+  //   // publish LessonUpdated (tùy bạn có cần cho video change)
+  //   publisher.publishEvent(
+  //       new StudentEvents.LessonUpdatedEvent(saved.getCourse().getId(), saved.getId()));
+
+  //   return lessonMapper.toDto(saved);
+  // }
 }

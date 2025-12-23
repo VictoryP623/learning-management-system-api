@@ -28,7 +28,7 @@ public class LessonCompletion {
 
   // Trạng thái học bài
   @Enumerated(EnumType.STRING)
-  @Column(name = "status")
+  @Column(name = "status", nullable = false)
   private LessonProgressStatus status = LessonProgressStatus.NOT_STARTED;
 
   // Số giây đã xem (dùng cho % tiến độ)
@@ -37,4 +37,12 @@ public class LessonCompletion {
 
   @Column(name = "completed_at")
   private LocalDateTime completedAt;
+
+  @PrePersist
+  @PreUpdate
+  private void ensureStatusNotNull() {
+    if (this.status == null) {
+      this.status = LessonProgressStatus.NOT_STARTED;
+    }
+  }
 }

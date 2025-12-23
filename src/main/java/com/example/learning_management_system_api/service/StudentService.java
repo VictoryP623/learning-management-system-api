@@ -268,14 +268,8 @@ public class StudentService implements IStudentService {
 
   @Override
   public ReviewDTO getReview(ReviewId reviewId) {
-    Optional<Review> optionalReview = reviewRepository.findById(reviewId);
-
-    if (optionalReview.isEmpty()) {
-      throw new NotFoundException(
-          "Review does not exist for the provided student ID and course ID");
-    }
-
-    return reviewMapper.toDto(optionalReview.get());
+    // Nếu chưa có review => trả null để Controller vẫn ResponseVO.success(null)
+    return reviewRepository.findById(reviewId).map(reviewMapper::toDto).orElse(null);
   }
 
   @Override

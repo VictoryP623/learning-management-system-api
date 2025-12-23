@@ -11,6 +11,8 @@ import com.example.learning_management_system_api.dto.response.PageDto;
 import com.example.learning_management_system_api.dto.response.ReviewResponseDto;
 import com.example.learning_management_system_api.dto.response.StudentResponseDto;
 import com.example.learning_management_system_api.entity.*;
+import com.example.learning_management_system_api.events.InstructorEvents;
+import com.example.learning_management_system_api.events.StudentEvents;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.repository.EnrollRepository;
 import com.example.learning_management_system_api.repository.InstructorRepository;
@@ -18,6 +20,7 @@ import com.example.learning_management_system_api.repository.LessonCompletionRep
 import com.example.learning_management_system_api.repository.LessonRepository;
 import com.example.learning_management_system_api.repository.ReviewRepository;
 import com.example.learning_management_system_api.repository.StudentRepository;
+import com.example.learning_management_system_api.utils.enums.LessonProgressStatus;
 import com.example.learning_management_system_api.utils.enums.UserRole;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
@@ -33,9 +36,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-
-import com.example.learning_management_system_api.events.StudentEvents;
-import com.example.learning_management_system_api.events.InstructorEvents;
 
 @Service
 public class CourseService implements ICourseService {
@@ -65,8 +65,7 @@ public class CourseService implements ICourseService {
       LessonCompletionRepository lessonCompletionRepository,
       StudentRepository studentRepository,
       LessonMapper lessonMapper,
-      ApplicationEventPublisher publisher
-  ) {
+      ApplicationEventPublisher publisher) {
     this.lessonMapper = lessonMapper;
     this.studentRepository = studentRepository;
     this.lessonRepository = lessonRepository;
@@ -187,8 +186,10 @@ public class CourseService implements ICourseService {
       LessonResponseDto dto = lessonMapper.toDto(lesson);
       if (studentId != null) {
         boolean isCompleted =
-            lessonCompletionRepository.existsByStudentIdAndLessonId(studentId, lesson.getId());
+            lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
+                studentId, lesson.getId(), LessonProgressStatus.COMPLETED);
         dto.setCompleted(isCompleted);
+
       } else {
         dto.setCompleted(false);
       }
@@ -316,17 +317,15 @@ public class CourseService implements ICourseService {
     // publish cho Instructor (kết quả duyệt)
     Long instructorId = course.getInstructor() != null ? course.getInstructor().getId() : null;
     if (instructorId != null) {
-      publisher.publishEvent(new InstructorEvents.CourseReviewOutcomeEvent(
-          course.getId(), instructorId, course.getStatus()
-      ));
+      publisher.publishEvent(
+          new InstructorEvents.CourseReviewOutcomeEvent(
+              course.getId(), instructorId, course.getStatus()));
     }
 
     // publish cho Student (khoá đổi trạng thái)
-    publisher.publishEvent(new StudentEvents.CourseStatusChangedEvent(
-        course.getId(),
-        oldStatus == null ? "UNKNOWN" : oldStatus,
-        course.getStatus()
-    ));
+    publisher.publishEvent(
+        new StudentEvents.CourseStatusChangedEvent(
+            course.getId(), oldStatus == null ? "UNKNOWN" : oldStatus, course.getStatus()));
 
     return courseMapper.toResponseDTO(course);
   }

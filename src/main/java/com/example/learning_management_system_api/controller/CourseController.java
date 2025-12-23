@@ -2,15 +2,17 @@ package com.example.learning_management_system_api.controller;
 
 import com.example.learning_management_system_api.config.CustomUserDetails;
 import com.example.learning_management_system_api.dto.mapper.CourseMapper;
-import com.example.learning_management_system_api.dto.request.CourseRequestDto;
 import com.example.learning_management_system_api.dto.request.CourseStatusUpdateRequest;
 import com.example.learning_management_system_api.dto.response.CourseResponseDto;
 import com.example.learning_management_system_api.dto.response.PageDto;
+import com.example.learning_management_system_api.dto.response.StudentProgressDto;
 import com.example.learning_management_system_api.entity.Course;
 import com.example.learning_management_system_api.exception.NotFoundException;
 import com.example.learning_management_system_api.repository.CourseRepository;
 import com.example.learning_management_system_api.service.CourseService;
 import com.example.learning_management_system_api.service.ICourseService;
+import com.example.learning_management_system_api.service.InstructorCourseStudentService;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,20 +28,23 @@ public class CourseController {
   private final ICourseService iCourseService;
   private final CourseService courseService;
   private final CourseRepository courseRepository;
+  private final InstructorCourseStudentService instructorCourseStudentService;
 
   public CourseController(
       CourseService courseService,
       CourseMapper courseMapper,
       ICourseService iCourseService,
-      CourseRepository courseRepository) {
+      CourseRepository courseRepository,
+      InstructorCourseStudentService instructorCourseStudentService) {
     this.courseMapper = courseMapper;
     this.iCourseService = iCourseService;
     this.courseService = courseService;
     this.courseRepository = courseRepository;
+    this.instructorCourseStudentService = instructorCourseStudentService;
   }
 
   @GetMapping("")
-  //@PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  // @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseEntity<?> getCourses(
       @RequestParam int page,
       @RequestParam int limit,
@@ -47,8 +52,8 @@ public class CourseController {
       @RequestParam(required = false) String categoryName,
       @RequestParam(required = false) Double price,
       @RequestParam(required = false) Long instructorId,
-      @AuthenticationPrincipal CustomUserDetails user) // Đúng kiểu này!
-      {
+      @AuthenticationPrincipal CustomUserDetails user // Đúng kiểu này!
+      ) {
     PageDto result =
         courseService.getAllCourse(
             page, limit, courseName, categoryName, price, instructorId, user);
@@ -70,6 +75,15 @@ public class CourseController {
     return new ResponseEntity<>(iCourseService.getStudentOfCourse(id, page, limit), HttpStatus.OK);
   }
 
+  // API mới: danh sách học viên + tiến độ học
+  @GetMapping("/{id}/students-progress")
+  @PreAuthorize("hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
+  public ResponseEntity<List<StudentProgressDto>> getStudentsProgressOfCourse(
+      @PathVariable Long id) {
+    List<StudentProgressDto> result = instructorCourseStudentService.getStudentsProgress(id);
+    return ResponseEntity.ok(result);
+  }
+
   @GetMapping("/{id}/reviews")
   @PreAuthorize("hasRole('ROLE_Student') or hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseEntity<PageDto> getReviewsOfCourse(
@@ -78,14 +92,6 @@ public class CourseController {
       @RequestParam(defaultValue = "10") int limit) {
     return new ResponseEntity<>(iCourseService.getReviewOfCourse(id, page, limit), HttpStatus.OK);
   }
-
-  // @PatchMapping("/{courseId}/status")
-  // @PreAuthorize("hasRole('ROLE_Admin')")
-  // public ResponseEntity<CourseResponseDto> updateCourseStatus(
-  //     @PathVariable Long courseId, @RequestBody CourseRequestDto request) {
-  //   CourseResponseDto response = iCourseService.updateCourseStatus(courseId, request.status());
-  //   return new ResponseEntity<>(response, HttpStatus.OK);
-  // }
 
   @PatchMapping("/{id}/status")
   @PreAuthorize("hasRole('ROLE_Admin')")

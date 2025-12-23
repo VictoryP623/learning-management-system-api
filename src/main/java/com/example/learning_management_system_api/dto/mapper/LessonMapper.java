@@ -8,14 +8,25 @@ import org.mapstruct.*;
 @Mapper(componentModel = "spring")
 public interface LessonMapper {
 
-  Lesson toEntity(LessonRequestDto lessonDto);
+  // Request.resourceUrl -> Entity.videoUrl
+  @Mapping(target = "id", ignore = true)
+  @Mapping(target = "course", ignore = true)
+  @Mapping(target = "videoUrl", source = "resourceUrl")
+  Lesson toEntity(LessonRequestDto dto);
 
-  @Mapping(source = "course.id", target = "courseId")
-  @Mapping(source = "course.name", target = "courseName")
-  @Mapping(source = "videoUrl", target = "resourceUrl") // map videoUrl -> resourceUrl trong DTO
-  @Mapping(source = "orderIndex", target = "orderIndex")
-  LessonResponseDto toDto(Lesson lesson);
+  // Entity.videoUrl -> Response.resourceUrl
+  @Mapping(
+      target = "courseId",
+      expression = "java(entity.getCourse() != null ? entity.getCourse().getId() : null)")
+  @Mapping(
+      target = "courseName",
+      expression = "java(entity.getCourse() != null ? entity.getCourse().getName() : null)")
+  @Mapping(target = "resourceUrl", source = "videoUrl")
+  LessonResponseDto toDto(Lesson entity);
 
+  // Patch/update: map resourceUrl -> videoUrl, và durationSec
   @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
-  void updateLessonEntity(LessonRequestDto sourceLesson, @MappingTarget Lesson targetLesson);
+  @Mapping(target = "course", ignore = true)
+  @Mapping(target = "videoUrl", source = "resourceUrl")
+  void updateLessonEntity(LessonRequestDto dto, @MappingTarget Lesson entity);
 }

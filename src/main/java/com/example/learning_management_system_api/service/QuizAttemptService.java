@@ -11,6 +11,7 @@ import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.repository.QuizAttemptRepository;
 import com.example.learning_management_system_api.repository.QuizRepository;
 import com.example.learning_management_system_api.repository.UserRepository;
+import com.example.learning_management_system_api.utils.enums.QuizType;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -21,19 +22,24 @@ import org.springframework.stereotype.Service;
 @Service
 public class QuizAttemptService {
 
-    private final QuizAttemptRepository quizAttemptRepository;
-    private final QuizRepository quizRepository;
-    private final UserRepository userRepository;
-    private final LessonService lessonService;
-    private final QuizAttemptMapper quizAttemptMapper;
+  private final QuizAttemptRepository quizAttemptRepository;
+  private final QuizRepository quizRepository;
+  private final UserRepository userRepository;
+  private final LessonService lessonService;
+  private final QuizAttemptMapper quizAttemptMapper;
 
-    public QuizAttemptService(QuizAttemptRepository quizAttemptRepository, QuizRepository quizRepository, UserRepository userRepository, LessonService lessonService, QuizAttemptMapper quizAttemptMapper) {
-        this.quizAttemptRepository = quizAttemptRepository;
-        this.quizRepository = quizRepository;
-        this.userRepository = userRepository;
-        this.lessonService = lessonService;
-        this.quizAttemptMapper = quizAttemptMapper;
-    }
+  public QuizAttemptService(
+      QuizAttemptRepository quizAttemptRepository,
+      QuizRepository quizRepository,
+      UserRepository userRepository,
+      LessonService lessonService,
+      QuizAttemptMapper quizAttemptMapper) {
+    this.quizAttemptRepository = quizAttemptRepository;
+    this.quizRepository = quizRepository;
+    this.userRepository = userRepository;
+    this.lessonService = lessonService;
+    this.quizAttemptMapper = quizAttemptMapper;
+  }
 
   public List<QuizAttemptResponseDto> checkAnswer(List<QuizAnswerDto> quizAnswers) {
     Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -56,7 +62,19 @@ public class QuizAttemptService {
                 .findById(quizId)
                 .orElseThrow(
                     () -> new NoSuchElementException("Quiz id " + quizId + " is not found"));
+
+        // Check permission (bao gồm đã enroll course)
         lessonService.checkGetPermission(quiz.getLesson().getCourse());
+
+        // Validate theo loại quiz
+        if (quiz.getQuizType() == QuizType.ONE_CHOICE && chosenAnswerIds.size() != 1) {
+          throw new IllegalArgumentException(
+              "ONE_CHOICE quiz must have exactly one selected answer");
+        }
+        if (quiz.getQuizType() == QuizType.MULTI_CHOICE && chosenAnswerIds.isEmpty()) {
+          throw new IllegalArgumentException(
+              "MULTI_CHOICE quiz must have at least one selected answer");
+        }
 
         Set<Integer> correctAnswerIds =
             quiz.getAnswerOptions().stream()
@@ -70,7 +88,8 @@ public class QuizAttemptService {
 
         QuizAttempt quizAttempt = new QuizAttempt();
         quizAttempt.setQuiz(quiz);
-        quizAttempt.setAnswerId(null); // Vì nhiều đáp án, có thể để null
+        // Với nhiều đáp án, chúng ta không dùng answerId đơn lẻ → để null
+        quizAttempt.setAnswerId(null);
         quizAttempt.setAttemptTimestamp(currentTime);
         quizAttempt.setUser(user);
         quizAttempt.setCorrect(isCorrect);
@@ -85,18 +104,19 @@ public class QuizAttemptService {
     return result;
   }
 
-    public  Map<Long, Map<LocalDateTime, List<QuizAttempt>>> getQuizAttempt(){
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
-            Long userId = customUserDetails.getUserId();
-            List<QuizAttempt> quizAttemptList = quizAttemptRepository.findByUserId(userId);
+  public Map<Long, Map<LocalDateTime, List<QuizAttempt>>> getQuizAttempt() {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    if (authentication != null
+        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
+      Long userId = customUserDetails.getUserId();
+      List<QuizAttempt> quizAttemptList = quizAttemptRepository.findByUser_Id(userId);
 
-            return quizAttemptList.stream()
-                    .collect(Collectors.groupingBy(
-                            attempt -> attempt.getUser().getId(), // Group by userId instead of User object
-                            Collectors.groupingBy(QuizAttempt::getAttemptTimestamp)
-                    ));
-        }
-        return null;
+      return quizAttemptList.stream()
+          .collect(
+              Collectors.groupingBy(
+                  attempt -> attempt.getUser().getId(),
+                  Collectors.groupingBy(QuizAttempt::getAttemptTimestamp)));
     }
+    return Collections.emptyMap();
+  }
 }

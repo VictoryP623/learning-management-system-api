@@ -10,115 +10,241 @@ import com.example.learning_management_system_api.repository.LessonRepository;
 import com.example.learning_management_system_api.repository.LessonResourceRepository;
 import com.google.auth.Credentials;
 import com.google.auth.oauth2.GoogleCredentials;
-import com.google.cloud.storage.BlobId;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
-import com.google.cloud.storage.StorageOptions;
+import com.google.cloud.storage.*;
 import com.google.firebase.internal.FirebaseService;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import lombok.SneakyThrows;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class LessonResourceService {
 
   private final LessonRepository lessonRepository;
   private final LessonResourceRepository lessonResourceRepository;
   private final LessonResourceMapper lessonResourceMapper;
 
-  private static final List<String> allowedTypes =
-      Arrays.asList(
-          "image/jpeg", // JPEG format
-          "image/png", // PNG format
-          "image/gif", // GIF format
-          "image/bmp", // BMP format
-          "image/webp", // WEBP format
-          "application/pdf", // PDF format
-          "application/msword", // Microsoft Word (.doc)
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-          "application/vnd.ms-excel", // .xls
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
-          );
+  // Cho phép tài liệu + video đính kèm
+  private static final Set<String> allowedTypes =
+      new HashSet<>(
+          Arrays.asList(
+              "image/jpeg",
+              "image/png",
+              "image/gif",
+              "image/bmp",
+              "image/webp",
+              "application/pdf",
+              "application/msword",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/vnd.ms-excel",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
-  @Value("${firebase.bucket}")
-  String firebaseBucket;
+              // ✅ POWERPOINT
+              "application/vnd.ms-powerpoint",
+              "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 
-  public LessonResourceService(
-      LessonRepository lessonRepository,
-      LessonResourceRepository lessonResourceRepository,
-      LessonResourceMapper lessonResourceMapper) {
-    this.lessonRepository = lessonRepository;
-    this.lessonResourceRepository = lessonResourceRepository;
-    this.lessonResourceMapper = lessonResourceMapper;
-  }
+              // VIDEO
+              "video/mp4",
+              "video/webm",
+              "video/quicktime",
+              "application/octet-stream" // một số browser gửi mp4 kiểu này
+              ));
 
-  String uploadFileToFirebase(MultipartFile file, String fileName) throws IOException {
-    BlobId blobId = BlobId.of(firebaseBucket, fileName);
-    BlobInfo blobInfo = BlobInfo.newBuilder(blobId).setContentType(file.getContentType()).build();
+  @Value("${firebase.bucket:}")
+  private String firebaseBucket;
 
+  private Credentials loadFirebaseCredentials() throws IOException {
     InputStream credentialsStream =
         FirebaseService.class.getClassLoader().getResourceAsStream("firebase-key.json");
-    Credentials credentials = GoogleCredentials.fromStream(credentialsStream);
-    Storage storage = StorageOptions.newBuilder().setCredentials(credentials).build().getService();
+    if (credentialsStream == null) {
+      throw new AppException(
+          500, "firebase-key.json NOT FOUND. Put it in src/main/resources/firebase-key.json");
+    }
+    return GoogleCredentials.fromStream(credentialsStream);
+  }
 
-    storage.create(blobInfo, file.getInputStream());
+  private Storage buildStorageClient() throws IOException {
+    if (firebaseBucket == null || firebaseBucket.isBlank()) {
+      throw new AppException(500, "Missing config firebase.bucket in application.properties");
+    }
+    Credentials credentials = loadFirebaseCredentials();
+    return StorageOptions.newBuilder().setCredentials(credentials).build().getService();
+  }
+
+  /** Public để service khác reuse */
+  public String uploadFileToFirebase(MultipartFile file, String firebasePath) throws IOException {
+    Storage storage = buildStorageClient();
+
+    String contentType = file.getContentType();
+    if (contentType == null || contentType.isBlank()) {
+      contentType = "application/octet-stream";
+    }
+
+    BlobId blobId = BlobId.of(firebaseBucket, firebasePath);
+    BlobInfo blobInfo = BlobInfo.newBuilder(blobId).setContentType(contentType).build();
+
+    try {
+      storage.create(blobInfo, file.getInputStream());
+    } catch (StorageException se) {
+      log.error(
+          "Firebase Storage upload failed. bucket={}, path={}, code={}, msg={}",
+          firebaseBucket,
+          firebasePath,
+          se.getCode(),
+          se.getMessage(),
+          se);
+      throw new AppException(500, "Firebase upload failed: " + safeMsg(se.getMessage()));
+    } catch (Exception e) {
+      log.error(
+          "Upload failed. bucket={}, path={}, err={}",
+          firebaseBucket,
+          firebasePath,
+          e.getMessage(),
+          e);
+      throw new AppException(500, "Upload failed: " + safeMsg(e.getMessage()));
+    }
 
     String DOWNLOAD_URL = "https://firebasestorage.googleapis.com/v0/b/%s/o/%s?alt=media";
     return String.format(
-        DOWNLOAD_URL, firebaseBucket, URLEncoder.encode(fileName, StandardCharsets.UTF_8));
+        DOWNLOAD_URL, firebaseBucket, URLEncoder.encode(firebasePath, StandardCharsets.UTF_8));
   }
 
-  @SneakyThrows
+  /** Public để service khác reuse */
+  public boolean deleteFileFromFirebase(String url) {
+    if (url == null || url.isBlank()) return true;
+    if (!url.contains("firebasestorage.googleapis.com")) return true;
+
+    try {
+      Storage storage = buildStorageClient();
+
+      String[] parts = url.split("/o/");
+      if (parts.length < 2) return true;
+
+      String fileName = parts[1].split("\\?")[0].replace("%2F", "/");
+      BlobId blobId = BlobId.of(firebaseBucket, fileName);
+
+      return storage.delete(blobId);
+    } catch (Exception e) {
+      log.error("Delete firebase file failed. url={}, err={}", url, e.getMessage(), e);
+      return false;
+    }
+  }
+
+  private String getExtension(String fileName) {
+    if (fileName == null) return "";
+    int idx = fileName.lastIndexOf(".");
+    if (idx < 0) return "";
+    return fileName.substring(idx);
+  }
+
+  private String detectTypeByFile(MultipartFile file) {
+    String name = Optional.ofNullable(file.getOriginalFilename()).orElse("").toLowerCase();
+    String ct = Optional.ofNullable(file.getContentType()).orElse("").toLowerCase();
+
+    if (ct.startsWith("video/")
+        || name.endsWith(".mp4")
+        || name.endsWith(".webm")
+        || name.endsWith(".mov")) {
+      return "VIDEO";
+    }
+    if (name.endsWith(".pdf")) return "PDF";
+    if (name.endsWith(".doc") || name.endsWith(".docx")) return "DOCX";
+    if (name.endsWith(".xls") || name.endsWith(".xlsx")) return "XLSX";
+    if (name.endsWith(".ppt") || name.endsWith(".pptx")) return "PPTX"; 
+    if (name.endsWith(".jpg")
+        || name.endsWith(".jpeg")
+        || name.endsWith(".png")
+        || name.endsWith(".gif")
+        || name.endsWith(".webp")) {
+      return "IMAGE";
+    }
+    return "OTHER";
+  }
+
+  private String safeMsg(String s) {
+    if (s == null) return "unknown";
+    return s.length() > 300 ? s.substring(0, 300) : s;
+  }
+
+  /**
+   * Model A: - Nếu trùng resourceName trong cùng lesson => REPLACE (xóa file cũ + update url) -
+   * Không trùng => create mới
+   */
   public LessonResourceDto addLessonResource(
       MultipartFile multipartFile, Long lessonId, String resourceName) {
-    String fileName = multipartFile.getOriginalFilename();
+
     Lesson lesson =
         lessonRepository
             .findById(lessonId)
             .orElseThrow(() -> new NoSuchElementException("Lesson not found"));
 
-    // Xoá resource cũ (nếu lesson đã có) – nếu bạn muốn cho nhiều tài liệu thì bỏ đoạn này
-    List<LessonResource> oldResources = lessonResourceRepository.findByLessonId(lessonId);
-    for (LessonResource r : oldResources) {
-      if (r.getUrl() != null && !r.getUrl().isEmpty()) {
-        deleteFileFromFirebase(r.getUrl());
-      }
-      lessonResourceRepository.delete(r);
-    }
-
-    // Kiểm tra loại file
-    String fileType = multipartFile.getContentType();
-    if (!allowedTypes.contains(fileType)) {
+    // Validate content-type (fallback octet-stream)
+    String contentType = multipartFile.getContentType();
+    if (contentType == null || contentType.isBlank()) contentType = "application/octet-stream";
+    if (!allowedTypes.contains(contentType)) {
       throw new AppException(
           415,
-          "File type is not accept. Only allow (.jpeg, .png, .gif, .bmp, .webp, .pdf, .doc, .docx,"
-              + " .xls, .xlsx)");
+          "File type is not accepted. Only allow"
+              + " image/pdf/doc/docx/xls/xlsx/ppt/pptx/mp4/webm/mov");
     }
 
-    // Sinh tên file lưu trên Firebase (tránh trùng)
-    fileName = UUID.randomUUID().toString().concat(this.getExtension(fileName));
-    fileName = "resources/" + fileName;
+    String displayName =
+        (resourceName == null || resourceName.isBlank())
+            ? Optional.ofNullable(multipartFile.getOriginalFilename()).orElse("Resource")
+            : resourceName.trim();
 
-    // Upload lên Firebase Storage
-    String url = uploadFileToFirebase(multipartFile, fileName);
+    String origin = multipartFile.getOriginalFilename();
+    String ext = getExtension(origin);
+    String firebasePath = "resources/" + UUID.randomUUID() + ext;
 
-    // Lưu vào DB
-    LessonResource lessonResource = new LessonResource();
-    lessonResource.setLesson(lesson);
-    lessonResource.setName(resourceName);
-    lessonResource.setUrl(url);
-    // nếu bạn đã thêm type/orderIndex trong LessonResource thì có thể set ở đây
+    String newUrl;
+    try {
+      newUrl = uploadFileToFirebase(multipartFile, firebasePath);
+    } catch (AppException ae) {
+      throw ae;
+    } catch (Exception e) {
+      log.error("Unexpected upload error: {}", e.getMessage(), e);
+      throw new AppException(500, "Upload resource failed.");
+    }
 
-    return lessonResourceMapper.toDto(lessonResourceRepository.save(lessonResource));
+    LessonResource existing =
+        lessonResourceRepository
+            .findFirstByLesson_IdAndNameIgnoreCase(lessonId, displayName)
+            .orElse(null);
+
+    if (existing != null) {
+      if (existing.getUrl() != null && !existing.getUrl().isBlank()) {
+        boolean ok = deleteFileFromFirebase(existing.getUrl());
+        if (!ok) {
+          log.warn("Replace resource: delete old file failed. oldUrl={}", existing.getUrl());
+        }
+      }
+      existing.setUrl(newUrl);
+      existing.setType(detectTypeByFile(multipartFile));
+      LessonResource saved = lessonResourceRepository.save(existing);
+      return lessonResourceMapper.toDto(saved);
+    }
+
+    LessonResource lr = new LessonResource();
+    lr.setLesson(lesson);
+    lr.setName(displayName);
+    lr.setUrl(newUrl);
+    lr.setType(detectTypeByFile(multipartFile));
+
+    Integer maxOrder = lessonResourceRepository.findMaxOrderIndexByLessonId(lessonId);
+    lr.setOrderIndex((maxOrder == null ? 0 : maxOrder) + 1);
+
+    LessonResource saved = lessonResourceRepository.save(lr);
+    return lessonResourceMapper.toDto(saved);
   }
 
   public void deleteResourceFile(Long lessonResourceId) {
@@ -127,34 +253,27 @@ public class LessonResourceService {
             .findById(lessonResourceId)
             .orElseThrow(() -> new NoSuchElementException("Lesson resource not found"));
 
-    // Xoá file trên firebase
     boolean success = deleteFileFromFirebase(lessonResource.getUrl());
     if (!success) {
-      throw new RuntimeException("Error while delete file from Firebase. Please try again later");
+      throw new AppException(
+          500, "Error while deleting file from Firebase. Please try again later.");
     }
-
-    // Xóa resource trong DB
     lessonResourceRepository.delete(lessonResource);
-
-    // Không cần đụng tới Lesson.videoUrl nữa
-    // (attachments tách riêng, video chính set qua LessonRequestDto)
   }
 
   public PageDto getAllLessonResource(Long lessonId, int page, int size) {
     lessonRepository
         .findById(lessonId)
         .orElseThrow(() -> new NoSuchElementException("Not found lesson"));
-    Pageable pageable = PageRequest.of(page, size);
-    Page<LessonResource> lessonResourcePage =
-        lessonResourceRepository.findByLessonId(lessonId, pageable);
-    List<LessonResourceDto> lessonResourceDtoList =
-        lessonResourcePage.getContent().stream().map(lessonResourceMapper::toDto).toList();
+
+    Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "orderIndex"));
+    Page<LessonResource> p = lessonResourceRepository.findByLesson_Id(lessonId, pageable);
+
+    List<LessonResourceDto> list =
+        p.getContent().stream().map(lessonResourceMapper::toDto).toList();
+
     return new PageDto(
-        lessonResourcePage.getNumber(),
-        lessonResourcePage.getSize(),
-        lessonResourcePage.getTotalPages(),
-        lessonResourcePage.getTotalElements(),
-        new ArrayList<>(lessonResourceDtoList));
+        p.getNumber(), p.getSize(), p.getTotalPages(), p.getTotalElements(), new ArrayList<>(list));
   }
 
   public LessonResourceDto getLessonResource(Long id) {
@@ -163,22 +282,5 @@ public class LessonResourceService {
             .findById(id)
             .orElseThrow(() -> new NoSuchElementException("Lesson resource not found"));
     return lessonResourceMapper.toDto(lessonResource);
-  }
-
-  @SneakyThrows
-  boolean deleteFileFromFirebase(String url) {
-    String[] parts = url.split("/o/");
-    String fileName = parts[1].split("\\?")[0];
-    fileName = fileName.replace("%2F", "/");
-    BlobId blobId = BlobId.of(firebaseBucket, fileName);
-    InputStream credentialsStream =
-        FirebaseService.class.getClassLoader().getResourceAsStream("firebase-key.json");
-    Credentials credentials = GoogleCredentials.fromStream(credentialsStream);
-    Storage storage = StorageOptions.newBuilder().setCredentials(credentials).build().getService();
-    return storage.delete(blobId);
-  }
-
-  private String getExtension(String fileName) {
-    return fileName.substring(fileName.lastIndexOf("."));
   }
 }

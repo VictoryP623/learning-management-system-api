@@ -11,14 +11,20 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface EnrollRepository extends JpaRepository<Enroll, EnrollId> {
+
   Page<Enroll> findByCourseId(Long courseId, Pageable pageable);
 
   Optional<Page<Enroll>> findByStudentId(Long studentId, Pageable pageable);
 
   boolean existsById(EnrollId id);
 
+  boolean existsByStudent_IdAndCourse_Id(Long studentId, Long courseId);
+
   @Query(
       "select e.student.user.id from Enroll e where e.course.id = :courseId and e.student.user.id"
           + " is not null")
   List<Long> findStudentUserIdsByCourseId(@Param("courseId") Long courseId);
+
+  // Dùng cho tính progress: lấy toàn bộ Enroll (Student + User) của 1 course
+  List<Enroll> findByCourse_Id(Long courseId);
 }

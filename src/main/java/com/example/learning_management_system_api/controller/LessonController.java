@@ -90,4 +90,15 @@ public class LessonController {
     LessonResponseDto response = lessonServiceImpl.completeLesson(studentId, lessonId);
     return ResponseEntity.ok(response);
   }
+
+  // @PreAuthorize("hasRole('ROLE_Instructor')")
+  // @PostMapping("/{id}/video")
+  // public ResponseEntity<LessonResponseDto> uploadLessonVideo(
+  //     @PathVariable Long id,
+  //     @RequestParam("video") org.springframework.web.multipart.MultipartFile video,
+  //     @RequestParam(value = "durationSec", required = false) Integer durationSec) {
+
+  //   LessonResponseDto dto = lessonServiceImpl.uploadLessonVideo(id, video, durationSec);
+  //   return ResponseEntity.ok(dto);
+  // }
 }

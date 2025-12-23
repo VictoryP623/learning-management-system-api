@@ -17,4 +17,8 @@ public interface LessonCompletionRepository extends JpaRepository<LessonCompleti
 
   boolean existsByStudentIdAndLessonIdAndStatus(
       Long studentId, Long lessonId, LessonProgressStatus status);
+
+  // Đếm số lesson đã hoàn thành trong 1 course
+  long countByStudentIdAndLesson_Course_IdAndStatus(
+      Long studentId, Long courseId, LessonProgressStatus status);
 }

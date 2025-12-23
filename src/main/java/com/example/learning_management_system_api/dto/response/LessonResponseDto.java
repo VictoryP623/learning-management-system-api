@@ -13,7 +13,8 @@ public class LessonResponseDto {
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
   private Boolean isFree;
-  private String resourceUrl; // videoUrl hoặc preview
+  private String resourceUrl;
+  private Integer durationSec;
   private Boolean completed;
   private Integer orderIndex;
   private Boolean locked;

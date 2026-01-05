@@ -37,11 +37,9 @@ public class SecurityConfig {
   @Autowired CustomUserDetailService customUserDetailService;
   @Autowired JwtAuthEntryPoint authEntryPoint;
 
-  // FE origin (override bằng app.CLIENT_URL)
   @Value("${app.CLIENT_URL:http://localhost:3000}")
   private String clientUrl;
 
-  // Chế độ CSP: dev | prod (đặt trong application-*.properties)
   @Value("${app.security.csp.mode:dev}")
   private String cspMode;
 
@@ -97,18 +95,14 @@ public class SecurityConfig {
         .authorizeHttpRequests(
             auth ->
                 auth
-                    // Preflight
                     .requestMatchers(HttpMethod.OPTIONS, "/**")
                     .permitAll()
-                    // WebSocket handshake endpoint (SockJS/STOMP)
                     .requestMatchers("/ws/**")
                     .permitAll()
-                    // Swagger / health
                     .requestMatchers(SWAGGER_WHITELIST.toArray(String[]::new))
                     .permitAll()
                     .requestMatchers(ACTUATOR_WHITELIST.toArray(String[]::new))
                     .permitAll()
-                    // Public APIs khác
                     .requestMatchers(PUBLIC_URLS.toArray(String[]::new))
                     .permitAll()
                     // .requestMatchers("/api/notifications/**").permitAll()
@@ -119,7 +113,6 @@ public class SecurityConfig {
     http.headers(
         headers -> {
           if ("prod".equalsIgnoreCase(cspMode)) {
-            // -------- PROD: siết chặt, cho phép kết nối realtime wss/ws --------
             headers
                 .contentSecurityPolicy(
                     csp ->
@@ -132,7 +125,6 @@ public class SecurityConfig {
                                 "font-src 'self'",
                                 "style-src 'self'",
                                 "script-src 'self'",
-                                // Cho phép kết nối từ FE + realtime ws/wss (cùng origin hoặc khác)
                                 "connect-src 'self' "
                                     + clientUrl.replace("http://", "https://")
                                     + " ws: wss:",
@@ -156,7 +148,6 @@ public class SecurityConfig {
                 .httpStrictTransportSecurity(
                     hsts -> hsts.includeSubDomains(true).preload(true).maxAgeInSeconds(31536000));
           } else {
-            // -------- DEV: nới cho HMR/Swagger, thuận phát triển + ws realtime --------
             headers
                 .contentSecurityPolicy(
                     csp ->
@@ -185,7 +176,6 @@ public class SecurityConfig {
                                 .STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
                 .frameOptions(frame -> frame.sameOrigin())
                 .contentTypeOptions(cto -> {})
-                // COOP/COEP tắt ở dev để tránh chặn resource bên thứ ba
                 .addHeaderWriter(
                     new StaticHeadersWriter("Cross-Origin-Resource-Policy", "same-origin"));
           }

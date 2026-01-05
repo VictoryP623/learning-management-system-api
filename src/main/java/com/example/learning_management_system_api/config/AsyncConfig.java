@@ -11,10 +11,6 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @EnableAsync
 public class AsyncConfig {
 
-  /**
-   * Executor mặc định cho @Async. Đặt tên "applicationTaskExecutor" để Spring tự dùng cho @Async
-   * nếu không chỉ định executor.
-   */
   @Bean(name = "applicationTaskExecutor")
   public Executor applicationTaskExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

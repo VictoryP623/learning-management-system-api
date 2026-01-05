@@ -13,7 +13,6 @@ public class FirebaseConfig {
 
   @Bean
   public FirebaseApp firebaseApp() throws IOException {
-    // Load the service account key from src/main/resources
     GoogleCredentials credentials =
         GoogleCredentials.fromStream(new ClassPathResource("firebase-key.json").getInputStream());
 

@@ -50,7 +50,7 @@ public class CourseController {
       @RequestParam(required = false) String categoryName,
       @RequestParam(required = false) Double price,
       @RequestParam(required = false) Long instructorId,
-      @AuthenticationPrincipal CustomUserDetails user // Đúng kiểu này!
+      @AuthenticationPrincipal CustomUserDetails user 
       ) {
     PageDto result =
         courseService.getAllCourse(
@@ -74,7 +74,6 @@ public class CourseController {
     return new ResponseEntity<>(iCourseService.getStudentOfCourse(id, page, limit), HttpStatus.OK);
   }
 
-  // API mới: danh sách học viên + tiến độ học
   @GetMapping("/{id}/students-progress")
   @PreAuthorize("hasRole('ROLE_Instructor') or hasRole('ROLE_Admin')")
   public ResponseEntity<List<StudentProgressDto>> getStudentsProgressOfCourse(

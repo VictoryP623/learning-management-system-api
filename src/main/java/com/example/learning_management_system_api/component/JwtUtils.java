@@ -60,7 +60,6 @@ public class JwtUtils {
     return claims(token).getSubject();
   }
 
-  /** NEW: lấy userId từ claim "id" (đúng theo generateAccessToken). */
   public Long getUserIdFromToken(String token) {
     Object raw = claims(token).get("id");
     if (raw == null) throw new JwtException("Token missing claim: id");

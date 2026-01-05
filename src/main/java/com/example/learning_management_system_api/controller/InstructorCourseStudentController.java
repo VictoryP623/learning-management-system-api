@@ -9,8 +9,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-// Endpoint cho Instructor xem danh sách học viên & tiến độ của 1 khoá
-
 @RestController
 @RequestMapping("/api/instructor/courses")
 @RequiredArgsConstructor

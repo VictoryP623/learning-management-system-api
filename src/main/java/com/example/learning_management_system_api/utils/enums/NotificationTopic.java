@@ -24,7 +24,7 @@ public enum NotificationTopic {
 
   // Student
   ASSIGNMENT_GRADED,
-  ASSIGNMENT_CREATED, // ✅ NEW: instructor tạo assignment -> notify student
+  ASSIGNMENT_CREATED, 
 
   // Instructor
   STUDENT_ENROLLED,

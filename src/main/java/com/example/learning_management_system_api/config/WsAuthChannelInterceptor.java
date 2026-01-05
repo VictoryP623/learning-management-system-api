@@ -34,7 +34,6 @@ public class WsAuthChannelInterceptor implements ChannelInterceptor {
             Principal principal = () -> String.valueOf(userId);
             accessor.setUser(principal);
 
-            // DEBUG (tạm thời): xác nhận BE thật sự set được Principal
             System.out.println("[WS] CONNECT ok, principal=" + principal.getName());
           } else {
             System.out.println("[WS] CONNECT invalid token");

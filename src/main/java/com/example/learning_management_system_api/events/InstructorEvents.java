@@ -5,16 +5,20 @@ public final class InstructorEvents {
   private InstructorEvents() {}
 
   /** Có review mới/sửa/xoá trên khoá học của instructor. */
-  public record ReviewChangedEvent(Long courseId, Long reviewId, String action, Long actorId)
-      implements DomainEvent {
+  public record ReviewChangedEvent(
+      Long courseId,
+      Long studentUserId,
+      String action, // CREATED / UPDATED / DELETED
+      Integer rating // nullable
+      ) implements DomainEvent {
     @Override
     public String idempotencyKey() {
-      return "Review:" + reviewId + ":" + action;
+      return "Review:" + courseId + ":student:" + studentUserId + ":" + action;
     }
   }
 
   /** Kết quả duyệt khoá từ Admin: APPROVED / REJECTED. */
-  public record CourseReviewOutcomeEvent(Long courseId, Long instructorId, String outcome)
+  public record CourseReviewOutcomeEvent(Long courseId, Long instructorUserId, String outcome)
       implements DomainEvent {
     @Override
     public String idempotencyKey() {
@@ -57,6 +61,40 @@ public final class InstructorEvents {
     @Override
     public String idempotencyKey() {
       return "RevenueDaily:" + instructorId + ":" + date;
+    }
+  }
+
+  // ==========================
+  // Sprint 2 LMS - NEW EVENTS
+  // ==========================
+
+  /** Student enroll vào course -> notify instructor */
+  public record StudentEnrolledCourseEvent(
+      Long instructorUserId,
+      Long studentUserId,
+      Long courseId,
+      String studentName,
+      String courseName)
+      implements DomainEvent {
+    @Override
+    public String idempotencyKey() {
+      return "InstructorStudentEnrolled:" + courseId + ":student:" + studentUserId;
+    }
+  }
+
+  /** Student submit assignment -> notify instructor */
+  public record StudentSubmittedAssignmentEvent(
+      Long instructorUserId,
+      Long studentUserId,
+      Long courseId,
+      Long lessonId,
+      Long assignmentId,
+      String studentName,
+      String assignmentTitle)
+      implements DomainEvent {
+    @Override
+    public String idempotencyKey() {
+      return "InstructorStudentSubmittedAssignment:" + assignmentId + ":student:" + studentUserId;
     }
   }
 }

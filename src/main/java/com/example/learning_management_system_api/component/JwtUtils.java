@@ -3,6 +3,7 @@ package com.example.learning_management_system_api.component;
 import static io.jsonwebtoken.Jwts.parserBuilder;
 
 import com.example.learning_management_system_api.entity.User;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -51,13 +52,23 @@ public class JwtUtils {
     return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
   }
 
+  private Claims claims(String token) {
+    return parserBuilder().setSigningKey(key()).build().parseClaimsJws(token).getBody();
+  }
+
   public String getUsernameFromToken(String token) {
-    return parserBuilder()
-        .setSigningKey(key())
-        .build()
-        .parseClaimsJws(token)
-        .getBody()
-        .getSubject();
+    return claims(token).getSubject();
+  }
+
+  /** NEW: lấy userId từ claim "id" (đúng theo generateAccessToken). */
+  public Long getUserIdFromToken(String token) {
+    Object raw = claims(token).get("id");
+    if (raw == null) throw new JwtException("Token missing claim: id");
+    if (raw instanceof Integer i) return i.longValue();
+    if (raw instanceof Long l) return l;
+    if (raw instanceof String s) return Long.valueOf(s);
+    if (raw instanceof Number n) return n.longValue();
+    throw new JwtException("Unsupported id claim type: " + raw.getClass().getName());
   }
 
   public boolean validateToken(String token) {

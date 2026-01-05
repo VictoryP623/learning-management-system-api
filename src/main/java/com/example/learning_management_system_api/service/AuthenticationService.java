@@ -100,6 +100,7 @@ public class AuthenticationService implements IAuthenticationService {
       }
     }
 
+    // Firebase Auth create (không cho fail làm hỏng register)
     try {
       com.google.firebase.auth.UserRecord.CreateRequest createRequest =
           new com.google.firebase.auth.UserRecord.CreateRequest()
@@ -113,23 +114,34 @@ public class AuthenticationService implements IAuthenticationService {
       System.out.println("Created user on Firebase Auth: " + userRecord.getUid());
     } catch (Exception ex) {
       System.out.println("Lỗi khi tạo user trên Firebase Auth: " + ex.getMessage());
+      ex.printStackTrace();
     }
 
     String verifyLink = String.format("%s/verify-email?token=%s", CLIENT_URL, token);
-
     Context context = new Context();
     context.setVariable("email", request.getEmail());
     context.setVariable("verificationLink", verifyLink);
 
-    emailService.sendHtmlEmail(
-        request.getEmail(), "Confirm your email address", "verification-email", context);
+    boolean emailSent = true;
+    try {
+      emailService.sendHtmlEmail(
+          request.getEmail(), "Confirm your email address", "verification-email", context);
+    } catch (Exception ex) {
+      emailSent = false;
+      System.err.println("Send verification email failed: " + ex.getMessage());
+      ex.printStackTrace();
+    }
 
     try {
       notificationFacade.welcomeOnRegister(user.getId());
     } catch (Exception ignore) {
     }
 
-    return "Registration successful. Please check your email to complete account verification.";
+    if (emailSent) {
+      return "Registration successful. Please check your email to complete account verification.";
+    }
+    return "Registration successful, but we could not send verification email. Please request"
+        + " resend.";
   }
 
   @Override
@@ -268,19 +280,31 @@ public class AuthenticationService implements IAuthenticationService {
         userRepository
             .findByEmail(email)
             .orElseThrow(() -> new AppException(404, "Account does not exist"));
+
     String token = generateVerificationToken();
     user.setVerificationCode(token);
     user.setVerificationCodeExpiry(LocalDateTime.now().plusHours(1));
     userRepository.save(user);
 
     String verifyLink = String.format("%s/auth/reset-password?token=%s", CLIENT_URL, token);
+
     Context context = new Context();
     context.setVariable("email", email);
     context.setVariable("verificationLink", verifyLink);
 
-    emailService.sendHtmlEmail(email, "Reset Password", "reset-password-email", context);
+    boolean emailSent = true;
+    try {
+      emailService.sendHtmlEmail(email, "Reset Password", "reset-password-email", context);
+    } catch (Exception ex) {
+      emailSent = false;
+      System.err.println("Send reset password email failed: " + ex.getMessage());
+      ex.printStackTrace();
+    }
 
-    return "Please check your email to reset your account.";
+    if (emailSent) {
+      return "Please check your email to reset your account.";
+    }
+    return "We could not send reset email right now. Please try again later or request resend.";
   }
 
   public void syncPasswordWithFirebase(String email, String password, String displayName) {
@@ -406,6 +430,7 @@ public class AuthenticationService implements IAuthenticationService {
       user.setStatus(UserStatus.ACTIVE);
       user.setRole(UserRole.valueOf(role));
       userRepository.save(user);
+
       if (user.getRole() == UserRole.Student) {
         Student student = new Student();
         student.setUser(user);
@@ -422,6 +447,7 @@ public class AuthenticationService implements IAuthenticationService {
         }
       }
     }
+
     String jwtAccessToken = jwtUtils.generateAccessToken(user);
     String jwtRefreshToken = jwtUtils.generateRefreshToken(user);
     user.setRefreshToken(jwtRefreshToken);

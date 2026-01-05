@@ -4,7 +4,6 @@ import com.example.learning_management_system_api.entity.Course;
 import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -46,4 +45,7 @@ public interface CourseRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Course c where c.id = :id")
   Optional<Course> findByIdForUpdate(@Param("id") Long id);
+
+  @Query("select c.instructor.user.id from Course c where c.id = :courseId")
+  Long findInstructorUserIdByCourseId(@Param("courseId") Long courseId);
 }

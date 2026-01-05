@@ -8,10 +8,7 @@ import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.repository.NotificationRepository;
 import com.example.learning_management_system_api.repository.UserRepository;
 import java.util.List;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.*;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -34,7 +31,7 @@ public class NotificationService {
   }
 
   // ========================
-  // 1. LIST & COUNT
+  // 1) LIST & COUNT
   // ========================
 
   public PageDto listByRecipient(Long recipientId, int page, int size) {
@@ -58,7 +55,7 @@ public class NotificationService {
   }
 
   // ========================
-  // 2. CREATE FROM API (Manual/Test)
+  // 2) CREATE FROM API (Manual/Test)
   // ========================
 
   @Transactional
@@ -69,30 +66,28 @@ public class NotificationService {
       actor = userRepo.findById(req.getActorId()).orElse(null);
     }
 
-    // BẮT BUỘC: topic & idempotencyKey để thỏa NOT NULL trong entity & DB
-    // Dùng topic "tạm" chỉ để test thủ công qua API.
-    var topicForTest =
-        com.example.learning_management_system_api.utils.enums.NotificationTopic
-            .COURSE_STATUS_CHANGED;
-    var idem = "manual:" + java.util.UUID.randomUUID();
+    String idem =
+        (req.getIdempotencyKey() != null && !req.getIdempotencyKey().isBlank())
+            ? req.getIdempotencyKey()
+            : "manual:" + java.util.UUID.randomUUID();
 
     Notification n =
         Notification.builder()
             .recipient(recipient)
             .actor(actor)
             .type(req.getType())
-            .topic(topicForTest) // <-- BẮT BUỘC
-            .idempotencyKey(idem) // <-- BẮT BUỘC
+            .topic(req.getTopic())
+            .idempotencyKey(idem)
             .title(req.getTitle())
             .message(req.getMessage())
             .linkUrl(req.getLinkUrl())
+            .dataJson(req.getDataJson())
+            .readFlag(false) // ✅ thêm dòng này
             .build();
 
     Notification saved = notificationRepo.save(n);
     NotificationResponse payload = toResponse(saved);
 
-    // Gửi realtime tới user-queue cho KHỚP FE:
-    // FE subscribe: /user/queue/notifications
     messaging.convertAndSendToUser(
         String.valueOf(recipient.getId()), "/queue/notifications", payload);
 
@@ -100,17 +95,8 @@ public class NotificationService {
   }
 
   // ========================
-  // 3. MARK READ
+  // 3) MARK READ
   // ========================
-
-  @Transactional
-  public void markRead(Long id) {
-    Notification n = notificationRepo.findById(id).orElseThrow();
-    if (!n.isReadFlag()) {
-      n.setReadFlag(true);
-      notificationRepo.save(n);
-    }
-  }
 
   @Transactional
   public void markAllRead(Long recipientId) {
@@ -131,7 +117,7 @@ public class NotificationService {
   }
 
   // ========================
-  // 4. DÙNG CHO DOMAIN NOTIFIER (Backend event)
+  // 4) DOMAIN NOTIFIER USE
   // ========================
 
   @Transactional
@@ -140,7 +126,7 @@ public class NotificationService {
   }
 
   // ========================
-  // 5. MAPPING DTO
+  // 5) MAPPING DTO
   // ========================
 
   private NotificationResponse toResponse(Notification n) {
@@ -149,9 +135,11 @@ public class NotificationService {
         .recipientId(n.getRecipient() != null ? n.getRecipient().getId() : null)
         .actorId(n.getActor() != null ? n.getActor().getId() : null)
         .type(n.getType())
+        .topic(n.getTopic())
         .title(n.getTitle())
         .message(n.getMessage())
         .linkUrl(n.getLinkUrl())
+        .dataJson(n.getDataJson())
         .readFlag(n.isReadFlag())
         .createdAt(n.getCreatedAt())
         .build();

@@ -17,7 +17,16 @@ public enum NotificationTopic {
   ORDER_CREATED,
   REVENUE_DAILY_SUMMARY,
 
+  // Admin
   ADMIN_NEW_INSTRUCTOR_PENDING,
   ADMIN_COURSE_SUBMITTED,
-  ADMIN_CONTENT_REPORTED
+  ADMIN_CONTENT_REPORTED,
+
+  // Student
+  ASSIGNMENT_GRADED,
+  ASSIGNMENT_CREATED, // ✅ NEW: instructor tạo assignment -> notify student
+
+  // Instructor
+  STUDENT_ENROLLED,
+  ASSIGNMENT_SUBMITTED
 }

@@ -23,7 +23,7 @@ import com.paypal.api.payments.*;
 import com.paypal.base.rest.APIContext;
 import com.paypal.base.rest.PayPalRESTException;
 import java.util.*;
-import org.springframework.beans.factory.annotation.Autowired;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -32,7 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PurchaseService {
-  @Autowired private NotificationFacade notificationFacade;
+
+  private final NotificationFacade notificationFacade;
 
   @Value("${paypal.client.id}")
   private String clientId;
@@ -59,6 +60,7 @@ public class PurchaseService {
   private final ReviewRepository reviewRepository;
 
   public PurchaseService(
+      NotificationFacade notificationFacade,
       PurchaseRepository purchaseRepository,
       CartRepository cartRepository,
       StudentRepository studentRepository,
@@ -67,6 +69,9 @@ public class PurchaseService {
       LessonRepository lessonRepository,
       EnrollRepository enrollRepository,
       ReviewRepository reviewRepository) {
+
+    this.notificationFacade = notificationFacade;
+
     this.reviewRepository = reviewRepository;
     this.enrollRepository = enrollRepository;
     this.lessonCompletionRepository = lessonCompletionRepository;
@@ -88,6 +93,7 @@ public class PurchaseService {
         cartRepository.findByStudent(student).stream()
             .filter(c -> courseIds.contains(c.getCourse().getId()))
             .toList();
+
     List<Course> courseList = cartList.stream().map(Cart::getCourse).toList();
     if (courseList.isEmpty()) throw new AppException(400, "Không có khóa học nào được chọn!");
 
@@ -102,10 +108,11 @@ public class PurchaseService {
     purchase.setTotalAmount(totalAmount);
     Purchase savedPurchase = purchaseRepository.save(purchase);
 
-    // Tạo order PayPal như cũ
+    // Tạo order PayPal
     Amount amount = new Amount();
     amount.setCurrency("USD");
     amount.setTotal(String.format("%.2f", totalAmount));
+
     Transaction transaction = new Transaction();
     transaction.setDescription("Thanh toán khóa học #" + savedPurchase.getId());
     transaction.setAmount(amount);
@@ -151,6 +158,7 @@ public class PurchaseService {
       throws PayPalRESTException {
 
     APIContext apiContext = new APIContext(clientId, clientSecret, mode);
+
     Payment payment = new Payment();
     payment.setId(paymentId);
 
@@ -159,74 +167,109 @@ public class PurchaseService {
 
     Payment executedPayment = payment.execute(apiContext, paymentExecution);
 
-    // Nếu payment thành công, update is_paid và xóa cart
-    if ("approved".equalsIgnoreCase(executedPayment.getState())) {
-      Purchase purchase =
-          purchaseRepository
-              .findById(purchaseId)
-              .orElseThrow(() -> new RuntimeException("Purchase not found"));
-      purchase.setIsPaid(true);
-      purchaseRepository.save(purchase);
+    if (!"approved".equalsIgnoreCase(executedPayment.getState())) {
+      throw new RuntimeException("Payment not approved");
+    }
 
-      // Xóa cart của student này sau khi xác nhận thành công
-      Student student = purchase.getStudent();
-      for (Course course : purchase.getCourses()) {
-        cartRepository.deleteByStudentAndCourse(student, course);
-      }
+    Purchase purchase =
+        purchaseRepository
+            .findById(purchaseId)
+            .orElseThrow(() -> new RuntimeException("Purchase not found"));
 
-      // ===== Thêm logic ENROLL sau khi mua thành công =====
-      for (Course course : purchase.getCourses()) {
-        EnrollId enrollId = new EnrollId(student.getId(), course.getId());
-        if (!enrollRepository.existsById(enrollId)) {
-          Enroll enroll = new Enroll();
-          enroll.setId(enrollId);
-          enroll.setStudent(student);
-          enroll.setCourse(course);
-          enrollRepository.save(enroll);
-        }
+    purchase.setIsPaid(true);
+    purchaseRepository.save(purchase);
+
+    System.out.println(">>> DB MARKER: purchaseId=" + purchase.getId() + ", isPaid=true");
+
+    // Xóa cart của student này sau khi xác nhận thành công
+    Student student = purchase.getStudent();
+    for (Course course : purchase.getCourses()) {
+      cartRepository.deleteByStudentAndCourse(student, course);
+    }
+
+    // ===== ENROLL sau khi mua thành công =====
+    for (Course course : purchase.getCourses()) {
+      EnrollId enrollId = new EnrollId(student.getId(), course.getId());
+      if (!enrollRepository.existsById(enrollId)) {
+        Enroll enroll = new Enroll();
+        enroll.setId(enrollId);
+        enroll.setStudent(student);
+        enroll.setCourse(course);
+        enrollRepository.save(enroll);
       }
-      // gửi notif cho student + instructor
+    }
+
+    // ===== Snapshot IDs để gửi notif =====
+    Long studentUserId =
+        (purchase.getStudent() != null && purchase.getStudent().getUser() != null)
+            ? purchase.getStudent().getUser().getId()
+            : null;
+
+    String studentName =
+        (purchase.getStudent() != null
+                && purchase.getStudent().getUser() != null
+                && purchase.getStudent().getUser().getFullname() != null)
+            ? purchase.getStudent().getUser().getFullname()
+            : "A student";
+
+    String orderCode = String.valueOf(purchase.getId());
+
+    List<Long> courseIds =
+        (purchase.getCourses() == null)
+            ? List.of()
+            : purchase.getCourses().stream().map(Course::getId).toList();
+
+    List<String> courseTitles =
+        (purchase.getCourses() == null)
+            ? List.of()
+            : purchase.getCourses().stream()
+                .map(c -> (c.getName() == null ? ("Course " + c.getId()) : c.getName()))
+                .toList();
+
+    Map<Long, Long> courseIdToInstructorUserId =
+        (purchase.getCourses() == null)
+            ? Map.of()
+            : purchase.getCourses().stream()
+                .filter(
+                    c ->
+                        c != null
+                            && c.getInstructor() != null
+                            && c.getInstructor().getUser() != null
+                            && c.getInstructor().getUser().getId() != null)
+                .collect(
+                    Collectors.toMap(
+                        Course::getId, c -> c.getInstructor().getUser().getId(), (a, b) -> a));
+
+    // ===== GỬI NOTIF TRỰC TIẾP (KHÔNG afterCommit) =====
+    // Vì NotificationFacade đã try/catch, nó sẽ không chặn flow chính.
+    System.out.println(
+        ">>> NOTIF DEBUG: studentUserId="
+            + studentUserId
+            + ", orderCode="
+            + orderCode
+            + ", courseIds="
+            + courseIds);
+
+    if (studentUserId != null) {
       try {
-        // Lấy userId student
-        Long studentUserId =
-            (purchase.getStudent() != null && purchase.getStudent().getUser() != null)
-                ? purchase.getStudent().getUser().getId()
-                : null;
+        // (1) student
+        notificationFacade.purchaseSucceededStudent(studentUserId, orderCode, courseTitles);
 
-        if (studentUserId != null) {
-          // Mã đơn (nếu có orderCode riêng thì thay ở đây)
-          String orderCode = String.valueOf(purchase.getId());
-
-          // Danh sách tên khóa học (Course dùng field "name")
-          java.util.List<String> courseTitles =
-              purchase.getCourses() == null
-                  ? java.util.List.of()
-                  : purchase.getCourses().stream()
-                      .map(c -> c.getName() == null ? ("Course " + c.getId()) : c.getName())
-                      .toList();
-
-          // (1) Thông báo cho student
-          notificationFacade.purchaseSucceededStudent(studentUserId, orderCode, courseTitles);
-
-          // (2) Thông báo cho instructor của từng course
-          String studentName =
-              (purchase.getStudent() != null && purchase.getStudent().getUser() != null)
-                  ? purchase.getStudent().getUser().getFullname()
-                  : "A student";
-
-          if (purchase.getCourses() != null) {
-            purchase
-                .getCourses()
-                .forEach(
-                    c -> {
-                      notificationFacade.purchaseNotifyInstructor(c, studentUserId, studentName);
-                    });
+        // (2) instructor từng course
+        for (Long courseId : courseIds) {
+          Long instructorUserId = courseIdToInstructorUserId.get(courseId);
+          if (instructorUserId != null) {
+            notificationFacade.purchaseNotifyInstructorByIds(
+                courseId, instructorUserId, studentUserId, studentName);
           }
         }
-      } catch (Exception ignore) {
+        System.out.println(">>> NOTIF DEBUG: dispatched");
+      } catch (Exception e) {
+        System.err.println(">>> NOTIF DEBUG: failed: " + e.getMessage());
+        e.printStackTrace();
       }
     } else {
-      throw new RuntimeException("Payment not approved");
+      System.err.println(">>> NOTIF DEBUG: studentUserId is NULL -> skip notify");
     }
   }
 
@@ -246,23 +289,19 @@ public class PurchaseService {
     if (authentication != null
         && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
 
-      // Lấy studentId hiện tại
       Long userId = customUserDetails.getUserId();
       Optional<Student> studentOpt = studentRepository.findByUserId(userId);
       Long studentId = studentOpt.map(Student::getId).orElse(null);
 
-      // Lấy các purchase đã thanh toán
       List<Purchase> purchaseList =
           purchaseRepository.findDistinctCoursesByStudent_User_IdAndIsPaidTrue(userId);
 
-      // Lấy các khóa học đã mua (không trùng)
       List<Course> boughtCourseEntity =
           purchaseList.stream()
               .flatMap(purchase -> purchase.getCourses().stream())
               .distinct()
               .toList();
 
-      // Map từng course, tính completed/total
       List<CourseResponseDto> boughtCourse =
           boughtCourseEntity.stream()
               .map(
@@ -275,14 +314,12 @@ public class PurchaseService {
                               lessonCompletionRepository.countByStudentIdAndLesson_Course_Id(
                                   studentId, course.getId());
                     }
-                    // Tính rating trung bình của course (nếu có cột này hoặc phải join từ bảng
-                    // review)
                     Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
-                    // Nếu không có, truyền 0.0 hoặc null tùy trường hợp
                     if (avgRating == null) avgRating = 0.0;
 
                     return new CourseResponseDto(
                         course.getId(),
+                        course.getInstructor().getUser().getId(),
                         course.getInstructor().getUser().getFullname(),
                         course.getCategory().getName(),
                         course.getPrice(),
@@ -293,15 +330,13 @@ public class PurchaseService {
                         course.getName(),
                         course.getCategory().getId(),
                         course.getRejectedReason(),
-                        null, // lessons
+                        null,
                         completedLessons,
                         totalLessons,
-                        avgRating // <-- Bắt buộc truyền trường này
-                        );
+                        avgRating);
                   })
               .toList();
 
-      // Paging thủ công
       if (page < 0 || size < 1) {
         throw new IllegalArgumentException("Page must start from 0 and size must greater than 0");
       }
@@ -316,7 +351,6 @@ public class PurchaseService {
       }
 
       return new PageDto(page, size, totalPages, totalElements, new ArrayList<Object>(pagedCourse));
-
     } else {
       return null;
     }

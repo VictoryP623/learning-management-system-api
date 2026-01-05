@@ -21,6 +21,7 @@ import com.example.learning_management_system_api.entity.Instructor;
 import com.example.learning_management_system_api.entity.Report;
 import com.example.learning_management_system_api.entity.Review;
 import com.example.learning_management_system_api.entity.Student;
+import com.example.learning_management_system_api.events.InstructorEvents;
 import com.example.learning_management_system_api.exception.ConflictException;
 import com.example.learning_management_system_api.exception.NotFoundException;
 import com.example.learning_management_system_api.repository.CartRepository;
@@ -37,9 +38,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class StudentService implements IStudentService {
@@ -73,6 +76,9 @@ public class StudentService implements IStudentService {
 
   @Autowired private LessonCompletionRepository lessonCompletionRepository;
 
+  // ✅ publish domain events (notify instructor, etc.)
+  @Autowired private ApplicationEventPublisher publisher;
+
   @Override
   public Optional<Student> getStudentById(Long id) {
     return studentRepository.findByUserId(id);
@@ -105,6 +111,7 @@ public class StudentService implements IStudentService {
 
                   return new CourseResponseDto(
                       course.getId(),
+                      course.getInstructor().getUser().getId(),
                       course.getInstructor().getUser().getFullname(),
                       course.getCategory().getName(),
                       course.getPrice(),
@@ -191,6 +198,7 @@ public class StudentService implements IStudentService {
   }
 
   // UC16: Đánh giá khóa học
+  @Transactional
   @Override
   public ReviewDTO submitReview(ReviewDTO reviewDTO) {
     ReviewId reviewId = reviewDTO.id();
@@ -235,9 +243,21 @@ public class StudentService implements IStudentService {
 
     Review savedReview = reviewRepository.save(review);
 
+    // ✅ publish: notify instructor review changed
+    try {
+      Long studentUserId = student.get().getUser() != null ? student.get().getUser().getId() : null;
+      if (studentUserId != null) {
+        publisher.publishEvent(
+            new InstructorEvents.ReviewChangedEvent(
+                reviewId.getCourseId(), studentUserId, "CREATED", reviewDTO.rating()));
+      }
+    } catch (Exception ignore) {
+    }
+
     return reviewMapper.toDto(savedReview);
   }
 
+  @Transactional
   @Override
   public ReviewDTO updateReview(ReviewDTO reviewDTO) {
     ReviewId reviewId = reviewDTO.id();
@@ -262,6 +282,20 @@ public class StudentService implements IStudentService {
     // Lưu thay đổi
     Review updatedReview = reviewRepository.save(existingReview);
 
+    // ✅ publish: notify instructor review changed
+    try {
+      Long studentUserId =
+          existingReview.getStudent() != null && existingReview.getStudent().getUser() != null
+              ? existingReview.getStudent().getUser().getId()
+              : null;
+      if (studentUserId != null) {
+        publisher.publishEvent(
+            new InstructorEvents.ReviewChangedEvent(
+                reviewId.getCourseId(), studentUserId, "UPDATED", reviewDTO.rating()));
+      }
+    } catch (Exception ignore) {
+    }
+
     // Trả về DTO
     return reviewMapper.toDto(updatedReview);
   }
@@ -278,6 +312,7 @@ public class StudentService implements IStudentService {
     return reviews.stream().map(reviewMapper::toDto).toList();
   }
 
+  @Transactional
   @Override
   public String deleteReview(ReviewId reviewId) {
     if (!reviewRepository.existsById(reviewId)) {
@@ -285,7 +320,31 @@ public class StudentService implements IStudentService {
           "Review does not exist for the provided student ID and course ID");
     }
 
+    // lấy info trước khi xoá để publish
+    Long studentUserId = null;
+    Integer rating = null;
+    try {
+      Review r = reviewRepository.findById(reviewId).orElse(null);
+      if (r != null) {
+        rating = r.getRating();
+        if (r.getStudent() != null && r.getStudent().getUser() != null) {
+          studentUserId = r.getStudent().getUser().getId();
+        }
+      }
+    } catch (Exception ignore) {
+    }
+
     reviewRepository.deleteById(reviewId);
+
+    // ✅ publish: notify instructor review changed
+    try {
+      if (studentUserId != null) {
+        publisher.publishEvent(
+            new InstructorEvents.ReviewChangedEvent(
+                reviewId.getCourseId(), studentUserId, "DELETED", rating));
+      }
+    } catch (Exception ignore) {
+    }
 
     return "Review deleted successfully";
   }

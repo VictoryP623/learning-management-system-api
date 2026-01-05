@@ -75,6 +75,8 @@ public class LessonService implements ILessonService {
     this.publisher = publisher;
   }
 
+  // ✅ IMPORTANT: cần @Transactional vì notifier dùng AFTER_COMMIT
+  @Transactional
   public LessonResponseDto createLesson(LessonRequestDto requestDTO) {
     Course course =
         courseRepository
@@ -109,12 +111,16 @@ public class LessonService implements ILessonService {
     Lesson savedLesson = lessonRepository.save(lesson);
 
     Long courseId = savedLesson.getCourse().getId();
-    Long instructorId =
+
+    // ✅ FIX: publish instructorUserId (User.id), không phải Instructor.id
+    Long instructorUserId =
         savedLesson.getCourse().getInstructor() != null
-            ? savedLesson.getCourse().getInstructor().getId()
+                && savedLesson.getCourse().getInstructor().getUser() != null
+            ? savedLesson.getCourse().getInstructor().getUser().getId()
             : null;
+
     publisher.publishEvent(
-        new StudentEvents.LessonCreatedEvent(courseId, savedLesson.getId(), instructorId));
+        new StudentEvents.LessonCreatedEvent(courseId, savedLesson.getId(), instructorUserId));
 
     return lessonMapper.toDto(savedLesson);
   }
@@ -205,6 +211,8 @@ public class LessonService implements ILessonService {
         .collect(Collectors.toList());
   }
 
+  // ✅ IMPORTANT: cần @Transactional vì notifier dùng AFTER_COMMIT
+  @Transactional
   public LessonResponseDto updateLesson(Long id, LessonRequestDto requestDTO) {
     Lesson lesson =
         lessonRepository
@@ -372,8 +380,6 @@ public class LessonService implements ILessonService {
       completion = new LessonCompletion();
       completion.setLesson(lesson);
       completion.setStudent(student);
-      // optional: nếu muốn ghi nhận started:
-      // completion.setStatus(LessonProgressStatus.IN_PROGRESS);
     }
 
     completion.setStatus(LessonProgressStatus.COMPLETED);
@@ -397,60 +403,4 @@ public class LessonService implements ILessonService {
 
     return response;
   }
-
-  // @Transactional
-  // public LessonResponseDto uploadLessonVideo(
-  //     Long lessonId, org.springframework.web.multipart.MultipartFile video, Integer durationSec)
-  // {
-
-  //   Lesson lesson =
-  //       lessonRepository
-  //           .findById(lessonId)
-  //           .orElseThrow(() -> new NoSuchElementException("Lesson not found with ID: " +
-  // lessonId));
-
-  //   checkPermission(lesson.getCourse());
-
-  //   String contentType = video.getContentType();
-  //   if (contentType == null || !contentType.equals("video/mp4")) {
-  //     throw new AppException(415, "Only mp4 video is allowed");
-  //   }
-  //   if (durationSec != null && durationSec < 1) {
-  //     throw new AppException(400, "durationSec must be >= 1");
-  //   }
-
-  //   String oldUrl = lesson.getVideoUrl();
-
-  //   String fileName = UUID.randomUUID() + ".mp4";
-  //   fileName = "lesson-videos/" + fileName;
-
-  //   String newUrl;
-  //   try {
-  //     newUrl = lessonResourceService.uploadFileToFirebase(video, fileName);
-  //   } catch (Exception e) {
-  //     throw new AppException(500, "Upload video failed");
-  //   }
-
-  //   lesson.setVideoUrl(newUrl);
-  //   lesson.setDurationSec(durationSec);
-
-  //   Lesson saved = lessonRepository.save(lesson);
-
-  //   // Auto-delete old video ONLY if it is a Firebase URL (avoid deleting external links)
-  //   if (oldUrl != null
-  //       && !oldUrl.isBlank()
-  //       && oldUrl.startsWith("https://firebasestorage.googleapis.com/")) {
-  //     try {
-  //       lessonResourceService.deleteFileFromFirebase(oldUrl);
-  //     } catch (Exception ex) {
-  //       // Best-effort: không fail request
-  //     }
-  //   }
-
-  //   // publish LessonUpdated (tùy bạn có cần cho video change)
-  //   publisher.publishEvent(
-  //       new StudentEvents.LessonUpdatedEvent(saved.getCourse().getId(), saved.getId()));
-
-  //   return lessonMapper.toDto(saved);
-  // }
 }

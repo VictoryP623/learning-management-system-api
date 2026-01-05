@@ -2,13 +2,13 @@ package com.example.learning_management_system_api.notification;
 
 import static org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT;
 
+import com.example.learning_management_system_api.dto.mapper.NotificationMapper;
 import com.example.learning_management_system_api.dto.response.NotificationResponse;
 import com.example.learning_management_system_api.entity.Notification;
 import com.example.learning_management_system_api.entity.User;
 import com.example.learning_management_system_api.events.AdminEvents.*;
 import com.example.learning_management_system_api.events.InstructorEvents.*;
 import com.example.learning_management_system_api.events.StudentEvents.*;
-import com.example.learning_management_system_api.dto.mapper.NotificationMapper;
 import com.example.learning_management_system_api.repository.*;
 import com.example.learning_management_system_api.service.NotificationService;
 import com.example.learning_management_system_api.utils.enums.NotificationTopic;
@@ -25,6 +25,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
 
   private final NotificationService notificationService;
   private final SimpMessagingTemplate messagingTemplate;
+
   private final EnrollRepository enrollRepo;
   private final CartRepository cartRepo;
   private final CourseRepository courseRepo;
@@ -52,11 +53,11 @@ public class DefaultDomainNotifier implements DomainNotifier {
   }
 
   /* ===== Helpers ===== */
-  private boolean duplicated(String key) {
-    return notificationRepo.existsByIdempotencyKey(key);
+
+  private boolean duplicatedExact(String idempotencyKey) {
+    return notificationRepo.existsByIdempotencyKey(idempotencyKey);
   }
 
-  // KHÔNG set createdAt (đã có @CreationTimestamp trong entity)
   private Notification make(
       NotificationTopic topic,
       NotificationType type,
@@ -77,27 +78,20 @@ public class DefaultDomainNotifier implements DomainNotifier {
         .build();
   }
 
-  // Lưu + đẩy DTO thống nhất lên /user/queue/notifications
   private void saveAndPush(Notification n, Long userId) {
     try {
       Notification saved = notificationService.save(n);
       NotificationResponse dto = notificationMapper.toDto(saved);
       messagingTemplate.convertAndSendToUser(String.valueOf(userId), "/queue/notifications", dto);
     } catch (DataIntegrityViolationException ignore) {
-      // Trùng idempotency_key do race-condition -> bỏ qua yên lặng
     }
   }
-
-  /* ===== Implementations with listeners ===== */
-
-  // ===================== Student =====================
 
   @Async
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(CourseStatusChangedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    String link = "/courses/" + e.courseId();
+    String link = "/course/" + e.courseId();
     String data =
         "{\"courseId\":"
             + e.courseId()
@@ -108,6 +102,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
             + "\"}";
 
     for (Long sid : enrollRepo.findStudentUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#enroll:" + sid;
+      if (duplicatedExact(idem)) continue;
+
       User u = userRepo.getReferenceById(sid);
       var n =
           make(
@@ -115,7 +112,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Khoá học cập nhật trạng thái",
                   "Khoá #" + e.courseId() + " chuyển " + e.fromStatus() + " → " + e.toStatus(),
-                  e.idempotencyKey() + "#enroll:" + sid,
+                  idem,
                   link,
                   data)
               .toUser(u);
@@ -123,6 +120,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
     }
 
     for (Long uid : cartRepo.findUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#watch:" + uid;
+      if (duplicatedExact(idem)) continue;
+
       User u = userRepo.getReferenceById(uid);
       var n =
           make(
@@ -135,7 +135,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
                       + e.fromStatus()
                       + " → "
                       + e.toStatus(),
-                  e.idempotencyKey() + "#watch:" + uid,
+                  idem,
                   link,
                   data)
               .toUser(u);
@@ -147,10 +147,22 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(LessonCreatedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    String link = "/courses/" + e.courseId() + "/lessons/" + e.lessonId();
-    String data = "{\"courseId\":" + e.courseId() + ",\"lessonId\":" + e.lessonId() + "}";
+    String link = "/courses/" + e.courseId() + "/learn";
+
+    String data =
+        "{"
+            + "\"courseId\":"
+            + e.courseId()
+            + ",\"lessonId\":"
+            + e.lessonId()
+            + ",\"instructorUserId\":"
+            + (e.instructorUserId() == null ? "null" : e.instructorUserId())
+            + "}";
+
     for (Long sid : enrollRepo.findStudentUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#student:" + sid;
+      if (duplicatedExact(idem)) continue;
+
       User u = userRepo.getReferenceById(sid);
       var n =
           make(
@@ -158,10 +170,15 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Bài học mới",
                   "Khoá #" + e.courseId() + " vừa thêm bài #" + e.lessonId(),
-                  e.idempotencyKey() + "#" + sid,
+                  idem,
                   link,
                   data)
               .toUser(u);
+
+      if (e.instructorUserId() != null) {
+        n.setActor(userRepo.getReferenceById(e.instructorUserId()));
+      }
+
       saveAndPush(n, sid);
     }
   }
@@ -170,10 +187,13 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(LessonUpdatedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    String link = "/courses/" + e.courseId() + "/lessons/" + e.lessonId();
+    String link = "/courses/" + e.courseId() + "/learn";
     String data = "{\"courseId\":" + e.courseId() + ",\"lessonId\":" + e.lessonId() + "}";
+
     for (Long sid : enrollRepo.findStudentUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#student:" + sid;
+      if (duplicatedExact(idem)) continue;
+
       User u = userRepo.getReferenceById(sid);
       var n =
           make(
@@ -181,7 +201,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Bài học cập nhật",
                   "Bài #" + e.lessonId() + " của khoá #" + e.courseId() + " đã cập nhật.",
-                  e.idempotencyKey() + "#" + sid,
+                  idem,
                   link,
                   data)
               .toUser(u);
@@ -193,10 +213,13 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(QuizPublishedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    String link = "/courses/" + e.courseId() + "/quizzes/" + e.quizId();
+    String link = "/courses/" + e.courseId() + "/learn";
     String data = "{\"courseId\":" + e.courseId() + ",\"quizId\":" + e.quizId() + "}";
+
     for (Long sid : enrollRepo.findStudentUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#student:" + sid;
+      if (duplicatedExact(idem)) continue;
+
       User u = userRepo.getReferenceById(sid);
       var n =
           make(
@@ -204,7 +227,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Quiz mới mở",
                   "Khoá #" + e.courseId() + " có quiz #" + e.quizId() + " vừa mở.",
-                  e.idempotencyKey() + "#" + sid,
+                  idem,
                   link,
                   data)
               .toUser(u);
@@ -216,7 +239,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(StudyReminderEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User u = userRepo.getReferenceById(e.studentId());
     var n =
         make(
@@ -224,8 +249,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                 NotificationType.INFO,
                 "Nhắc học",
                 "Đã " + e.reason(),
-                e.idempotencyKey(),
-                "/courses/" + e.courseId(),
+                idem,
+                "/courses/" + e.courseId() + "/learn",
                 "{\"courseId\":" + e.courseId() + ",\"reason\":\"" + e.reason() + "\"}")
             .toUser(u);
     saveAndPush(n, e.studentId());
@@ -235,7 +260,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(CourseCompletedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User u = userRepo.getReferenceById(e.studentId());
     var n =
         make(
@@ -243,7 +270,7 @@ public class DefaultDomainNotifier implements DomainNotifier {
                 NotificationType.SUCCESS,
                 "Hoàn thành khoá học",
                 "Chúc mừng! Hoàn tất 100% khoá #" + e.courseId() + ". Hãy để lại đánh giá nhé!",
-                e.idempotencyKey(),
+                idem,
                 "/courses/" + e.courseId() + "/review",
                 "{\"courseId\":" + e.courseId() + ",\"cta\":\"review\"}")
             .toUser(u);
@@ -254,9 +281,10 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(RefundStatusChangedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User u = userRepo.getReferenceById(e.studentId());
-    // map status -> type
     NotificationType t =
         "APPROVED".equalsIgnoreCase(e.status())
             ? NotificationType.SUCCESS
@@ -270,70 +298,210 @@ public class DefaultDomainNotifier implements DomainNotifier {
                 t,
                 "Yêu cầu hoàn tiền",
                 "Trạng thái #" + e.refundId() + ": " + e.status(),
-                e.idempotencyKey(),
+                idem,
                 "/account/refunds/" + e.refundId(),
                 "{\"refundId\":" + e.refundId() + ",\"status\":\"" + e.status() + "\"}")
             .toUser(u);
     saveAndPush(n, e.studentId());
   }
 
-  // ===================== Instructor =====================
+  @Async
+  @TransactionalEventListener(phase = AFTER_COMMIT)
+  @Override
+  public void handle(AssignmentGradedEvent e) {
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
+    Long sid = e.studentUserId();
+    User stu = userRepo.getReferenceById(sid);
+
+    String link = "/courses/" + e.courseId() + "/assignments";
+
+    String data =
+        "{"
+            + "\"courseId\":"
+            + e.courseId()
+            + ",\"lessonId\":"
+            + e.lessonId()
+            + ",\"assignmentId\":"
+            + e.assignmentId()
+            + ",\"score\":"
+            + e.score()
+            + ",\"maxScore\":"
+            + e.maxScore()
+            + "}";
+
+    String body =
+        "Bài \""
+            + e.assignmentTitle()
+            + "\" đã được chấm: "
+            + e.score()
+            + "/"
+            + e.maxScore()
+            + (e.feedback() != null && !e.feedback().isBlank()
+                ? ". Feedback: " + e.feedback()
+                : "");
+
+    var n =
+        make(
+                NotificationTopic.ASSIGNMENT_GRADED,
+                NotificationType.SUCCESS,
+                "Bài tập đã được chấm",
+                body,
+                idem,
+                link,
+                data)
+            .toUser(stu);
+
+    if (e.instructorUserId() != null) {
+      n.setActor(userRepo.getReferenceById(e.instructorUserId()));
+    }
+
+    saveAndPush(n, sid);
+  }
+
+  @Async
+  @TransactionalEventListener(phase = AFTER_COMMIT)
+  @Override
+  public void handle(AssignmentCreatedEvent e) {
+    String link = "/courses/" + e.courseId() + "/assignments";
+
+    String data =
+        "{"
+            + "\"courseId\":"
+            + e.courseId()
+            + ",\"lessonId\":"
+            + e.lessonId()
+            + ",\"assignmentId\":"
+            + e.assignmentId()
+            + ",\"assignmentTitle\":\""
+            + (e.assignmentTitle() == null ? "" : e.assignmentTitle().replace("\"", "\\\""))
+            + "\""
+            + "}";
+
+    for (Long sid : enrollRepo.findStudentUserIdsByCourseId(e.courseId())) {
+      String idem = e.idempotencyKey() + "#student:" + sid;
+      if (duplicatedExact(idem)) continue;
+
+      User u = userRepo.getReferenceById(sid);
+
+      var n =
+          make(
+                  NotificationTopic.ASSIGNMENT_CREATED,
+                  NotificationType.INFO,
+                  "Bài tập mới",
+                  "Khoá #"
+                      + e.courseId()
+                      + " vừa có bài tập mới: "
+                      + (e.assignmentTitle() == null ? "" : e.assignmentTitle()),
+                  idem,
+                  link,
+                  data)
+              .toUser(u);
+
+      if (e.instructorUserId() != null) {
+        n.setActor(userRepo.getReferenceById(e.instructorUserId()));
+      }
+
+      saveAndPush(n, sid);
+    }
+  }
 
   @Async
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(ReviewChangedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    Long insId = courseRepo.findInstructorIdByCourseId(e.courseId());
-    if (insId == null) return;
-    User ins = userRepo.getReferenceById(insId);
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
+    Long instructorUserId = courseRepo.findInstructorUserIdByCourseId(e.courseId());
+    if (instructorUserId == null) return;
+
+    User ins = userRepo.getReferenceById(instructorUserId);
+
+    String link = "/course/" + e.courseId();
+
+    String data =
+        "{"
+            + "\"courseId\":"
+            + e.courseId()
+            + ",\"studentUserId\":"
+            + e.studentUserId()
+            + ",\"action\":\""
+            + e.action()
+            + "\""
+            + (e.rating() != null ? ",\"rating\":" + e.rating() : "")
+            + "}";
+
+    String actionText =
+        "CREATED".equalsIgnoreCase(e.action())
+            ? "tạo"
+            : "UPDATED".equalsIgnoreCase(e.action()) ? "cập nhật" : "xóa";
+
+    String body =
+        "Học viên đã "
+            + actionText
+            + " đánh giá cho khoá #"
+            + e.courseId()
+            + (e.rating() != null ? " (rating: " + e.rating() + ")" : "");
+
     var n =
         make(
                 NotificationTopic.NEW_REVIEW,
                 NotificationType.INFO,
                 "Review thay đổi",
-                "Khoá #" + e.courseId() + " có review #" + e.reviewId() + " (" + e.action() + ").",
-                e.idempotencyKey() + "#ins:" + insId,
-                "/instructor/courses/" + e.courseId() + "/reviews/" + e.reviewId(),
-                "{\"courseId\":"
-                    + e.courseId()
-                    + ",\"reviewId\":"
-                    + e.reviewId()
-                    + ",\"action\":\""
-                    + e.action()
-                    + "\"}")
+                body,
+                idem + "#ins:" + instructorUserId,
+                link,
+                data)
             .toUser(ins);
-    saveAndPush(n, insId);
+
+    if (e.studentUserId() != null) {
+      n.setActor(userRepo.getReferenceById(e.studentUserId()));
+    }
+
+    saveAndPush(n, instructorUserId);
   }
 
   @Async
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(CourseReviewOutcomeEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
-    User ins = userRepo.getReferenceById(e.instructorId());
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
+    User ins = userRepo.getReferenceById(e.instructorUserId());
     boolean approved = "APPROVED".equalsIgnoreCase(e.outcome());
     NotificationType t = approved ? NotificationType.SUCCESS : NotificationType.ERROR;
+
+    NotificationTopic topic =
+        approved
+            ? NotificationTopic.INSTRUCTOR_COURSE_APPROVED
+            : NotificationTopic.INSTRUCTOR_COURSE_REJECTED;
+
     String body = "Khoá #" + e.courseId() + " đã được " + (approved ? "DUYỆT" : "TỪ CHỐI");
 
     var n =
         make(
-                NotificationTopic.INSTRUCTOR_COURSE_APPROVED,
+                topic,
                 t,
                 "Kết quả duyệt khoá",
                 body,
-                e.idempotencyKey(),
-                "/instructor/courses/" + e.courseId(),
+                idem,
+                "/instructor/course/" + e.courseId(),
                 "{\"courseId\":" + e.courseId() + ",\"outcome\":\"" + e.outcome() + "\"}")
             .toUser(ins);
-    saveAndPush(n, e.instructorId());
+
+    saveAndPush(n, e.instructorUserId());
   }
 
   @Async
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(CoursePublishedToggledEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User ins = userRepo.getReferenceById(e.instructorId());
     var n =
         make(
@@ -341,8 +509,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                 NotificationType.INFO,
                 "Trạng thái hiển thị khoá",
                 "Khoá #" + e.courseId() + (e.published() ? " đã PUBLISH" : " đã UNPUBLISH"),
-                e.idempotencyKey(),
-                "/instructor/courses/" + e.courseId(),
+                idem,
+                "/instructor/course/" + e.courseId(),
                 "{\"courseId\":" + e.courseId() + ",\"published\":" + e.published() + "}")
             .toUser(ins);
     saveAndPush(n, e.instructorId());
@@ -352,9 +520,12 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(ContentRemovedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     Long insId = courseRepo.findInstructorIdByCourseId(e.courseId());
     if (insId == null) return;
+
     User ins = userRepo.getReferenceById(insId);
     var n =
         make(
@@ -367,8 +538,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                     + e.contentId()
                     + " bị gỡ. Lý do: "
                     + e.reason(),
-                e.idempotencyKey(),
-                "/instructor/courses/" + e.courseId(),
+                idem,
+                "/instructor/course/" + e.courseId(),
                 "{\"courseId\":"
                     + e.courseId()
                     + ",\"type\":\""
@@ -377,6 +548,11 @@ public class DefaultDomainNotifier implements DomainNotifier {
                     + e.contentId()
                     + "}")
             .toUser(ins);
+
+    if (e.moderatorId() != null) {
+      n.setActor(userRepo.getReferenceById(e.moderatorId()));
+    }
+
     saveAndPush(n, insId);
   }
 
@@ -384,7 +560,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(OrderCreatedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User ins = userRepo.getReferenceById(e.instructorId());
     var n =
         make(
@@ -392,8 +570,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                 NotificationType.INFO,
                 "Đơn hàng mới",
                 "Đơn #" + e.orderId() + " cho khoá #" + e.courseId(),
-                e.idempotencyKey(),
-                "/instructor/orders/" + e.orderId(),
+                idem,
+                "/instructor-dashboard",
                 "{\"orderId\":"
                     + e.orderId()
                     + ",\"courseId\":"
@@ -409,7 +587,9 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(RevenueDailySummaryEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
     User ins = userRepo.getReferenceById(e.instructorId());
     var n =
         make(
@@ -423,8 +603,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                     + " đơn, "
                     + e.totalAmountMinor()
                     + " VNĐ.",
-                e.idempotencyKey(),
-                "/instructor/analytics?date=" + e.date(),
+                idem,
+                "/instructor/statistics",
                 "{\"date\":\""
                     + e.date()
                     + "\",\"orders\":"
@@ -436,15 +616,83 @@ public class DefaultDomainNotifier implements DomainNotifier {
     saveAndPush(n, e.instructorId());
   }
 
-  // ===================== Admin =====================
+  @Async
+  @TransactionalEventListener(phase = AFTER_COMMIT)
+  @Override
+  public void handle(StudentEnrolledCourseEvent e) {
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
+    Long insId = e.instructorUserId();
+    User ins = userRepo.getReferenceById(insId);
+
+    String link = "/instructor/course/" + e.courseId();
+    String data =
+        "{" + "\"courseId\":" + e.courseId() + ",\"studentId\":" + e.studentUserId() + "}";
+
+    var n =
+        make(
+                NotificationTopic.STUDENT_ENROLLED,
+                NotificationType.INFO,
+                "Có học viên đăng ký",
+                e.studentName() + " đã đăng ký khoá \"" + e.courseName() + "\".",
+                idem,
+                link,
+                data)
+            .toUser(ins);
+
+    n.setActor(userRepo.getReferenceById(e.studentUserId()));
+    saveAndPush(n, insId);
+  }
+
+  @Async
+  @TransactionalEventListener(phase = AFTER_COMMIT)
+  @Override
+  public void handle(StudentSubmittedAssignmentEvent e) {
+    String idem = e.idempotencyKey();
+    if (duplicatedExact(idem)) return;
+
+    Long insId = e.instructorUserId();
+    User ins = userRepo.getReferenceById(insId);
+
+    String link = "/instructor/lessons/" + e.lessonId() + "/assignments";
+
+    String data =
+        "{"
+            + "\"courseId\":"
+            + e.courseId()
+            + ",\"lessonId\":"
+            + e.lessonId()
+            + ",\"assignmentId\":"
+            + e.assignmentId()
+            + ",\"studentId\":"
+            + e.studentUserId()
+            + "}";
+
+    var n =
+        make(
+                NotificationTopic.ASSIGNMENT_SUBMITTED,
+                NotificationType.INFO,
+                "Bài nộp mới",
+                e.studentName() + " vừa nộp bài \"" + e.assignmentTitle() + "\".",
+                idem,
+                link,
+                data)
+            .toUser(ins);
+
+    n.setActor(userRepo.getReferenceById(e.studentUserId()));
+    saveAndPush(n, insId);
+  }
 
   @Async
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(NewInstructorPendingEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
     List<Long> adminIds = userRepo.findAdminIds();
     for (Long adminId : adminIds) {
+      String idem = e.idempotencyKey() + "#admin:" + adminId;
+      if (duplicatedExact(idem)) continue;
+
       User admin = userRepo.getReferenceById(adminId);
       var n =
           make(
@@ -452,8 +700,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Giảng viên mới chờ duyệt",
                   "Có đăng ký mới: #" + e.instructorId(),
-                  e.idempotencyKey() + "#admin:" + adminId,
-                  "/admin/instructors/pending",
+                  idem,
+                  "/admin-dashboard",
                   "{\"instructorId\":" + e.instructorId() + "}")
               .toUser(admin);
       saveAndPush(n, adminId);
@@ -464,9 +712,11 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(CourseSubmittedForReviewEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
     List<Long> adminIds = userRepo.findAdminIds();
     for (Long adminId : adminIds) {
+      String idem = e.idempotencyKey() + "#admin:" + adminId;
+      if (duplicatedExact(idem)) continue;
+
       User admin = userRepo.getReferenceById(adminId);
       var n =
           make(
@@ -474,8 +724,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.INFO,
                   "Khoá học chờ duyệt",
                   "Khoá #" + e.courseId() + " cần duyệt.",
-                  e.idempotencyKey() + "#admin:" + adminId,
-                  "/admin/courses/review/" + e.courseId(),
+                  idem,
+                  "/admin-dashboard",
                   "{\"courseId\":" + e.courseId() + ",\"instructorId\":" + e.instructorId() + "}")
               .toUser(admin);
       saveAndPush(n, adminId);
@@ -486,9 +736,11 @@ public class DefaultDomainNotifier implements DomainNotifier {
   @TransactionalEventListener(phase = AFTER_COMMIT)
   @Override
   public void handle(ContentReportedEvent e) {
-    if (duplicated(e.idempotencyKey())) return;
     List<Long> adminIds = userRepo.findAdminIds();
     for (Long adminId : adminIds) {
+      String idem = e.idempotencyKey() + "#admin:" + adminId;
+      if (duplicatedExact(idem)) continue;
+
       User admin = userRepo.getReferenceById(adminId);
       var n =
           make(
@@ -496,8 +748,8 @@ public class DefaultDomainNotifier implements DomainNotifier {
                   NotificationType.WARNING,
                   "Báo cáo nội dung",
                   "Report #" + e.reportId() + " trên " + e.targetType() + " #" + e.targetId(),
-                  e.idempotencyKey() + "#admin:" + adminId,
-                  "/admin/reports/" + e.reportId(),
+                  idem,
+                  "/admin-dashboard",
                   "{\"reportId\":"
                       + e.reportId()
                       + ",\"courseId\":"

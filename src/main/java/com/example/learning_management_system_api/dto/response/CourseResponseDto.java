@@ -5,6 +5,7 @@ import java.util.List;
 
 public record CourseResponseDto(
     Long id,
+    Long instructorUserId, 
     String instructorName,
     String categoryName,
     Double price,

@@ -2,10 +2,12 @@ package com.example.learning_management_system_api.notification;
 
 import com.example.learning_management_system_api.events.AdminEvents.*;
 import com.example.learning_management_system_api.events.InstructorEvents.*;
+import com.example.learning_management_system_api.events.StudentEvents;
 import com.example.learning_management_system_api.events.StudentEvents.*;
 
 public interface DomainNotifier {
-  // Student
+
+  // ===================== Student =====================
   void handle(CourseStatusChangedEvent e);
 
   void handle(LessonCreatedEvent e);
@@ -20,7 +22,12 @@ public interface DomainNotifier {
 
   void handle(RefundStatusChangedEvent e);
 
-  // Instructor
+  void handle(StudentEvents.AssignmentCreatedEvent e);
+
+  // NEW (Sprint 2)
+  void handle(AssignmentGradedEvent e);
+
+  // ===================== Instructor =====================
   void handle(ReviewChangedEvent e);
 
   void handle(CourseReviewOutcomeEvent e);
@@ -33,7 +40,12 @@ public interface DomainNotifier {
 
   void handle(RevenueDailySummaryEvent e);
 
-  // Admin
+  // NEW (Sprint 2)
+  void handle(StudentEnrolledCourseEvent e);
+
+  void handle(StudentSubmittedAssignmentEvent e);
+
+  // ===================== Admin =====================
   void handle(NewInstructorPendingEvent e);
 
   void handle(CourseSubmittedForReviewEvent e);

@@ -14,11 +14,13 @@ public interface ICourseService {
       Long instructorId,
       CustomUserDetails userDetails);
 
-  CourseResponseDto getCourse(Long id);
+  CourseResponseDto getCourse(Long id, CustomUserDetails user);
 
   PageDto getStudentOfCourse(Long id, int page, int limit);
 
   PageDto getReviewOfCourse(Long id, int page, int limit);
 
-  CourseResponseDto updateCourseStatus(Long courseId, String status);
+  CourseResponseDto updateCourseStatus(Long courseId, String status, String rejectedReason);
+
+  CourseResponseDto resubmitCourse(Long courseId, Long instructorUserId);
 }

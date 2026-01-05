@@ -111,7 +111,6 @@ public class SecurityConfig {
                     // Public APIs khác
                     .requestMatchers(PUBLIC_URLS.toArray(String[]::new))
                     .permitAll()
-                    // Tuỳ bạn: tạm thời permit để test Notification REST, hoặc để authenticated
                     // .requestMatchers("/api/notifications/**").permitAll()
                     .anyRequest()
                     .authenticated());

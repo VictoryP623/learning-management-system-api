@@ -14,7 +14,7 @@ public final class StudentEvents {
   }
 
   /** Khi thêm bài học mới vào khoá. */
-  public record LessonCreatedEvent(Long courseId, Long lessonId, Long instructorId)
+  public record LessonCreatedEvent(Long courseId, Long lessonId, Long instructorUserId)
       implements DomainEvent {
     @Override
     public String idempotencyKey() {
@@ -61,6 +61,40 @@ public final class StudentEvents {
     @Override
     public String idempotencyKey() {
       return "Refund:" + refundId + ":" + status;
+    }
+  }
+
+  /** Student nhận thông báo khi assignment được chấm điểm. */
+  public record AssignmentGradedEvent(
+      Long studentUserId,
+      Long instructorUserId,
+      Long courseId,
+      Long lessonId,
+      Long assignmentId,
+      String assignmentTitle,
+      Double score,
+      Double maxScore,
+      String feedback // optional
+      ) implements DomainEvent {
+
+    @Override
+    public String idempotencyKey() {
+      return "AssignmentGraded:" + assignmentId + ":student:" + studentUserId + ":score:" + score;
+    }
+  }
+
+  /** Instructor tạo assignment mới -> notify toàn bộ student đã enroll khoá */
+  public record AssignmentCreatedEvent(
+      Long courseId,
+      Long lessonId,
+      Long assignmentId,
+      Long instructorUserId,
+      String assignmentTitle)
+      implements DomainEvent {
+
+    @Override
+    public String idempotencyKey() {
+      return "AssignmentCreated:" + assignmentId;
     }
   }
 }

@@ -33,9 +33,8 @@ import org.springframework.context.ApplicationEventPublisher; // NEW
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CourseService implements ICourseService {
@@ -126,6 +125,7 @@ public class CourseService implements ICourseService {
                   if (avgRating == null) avgRating = 0.0;
                   return new CourseResponseDto(
                       course.getId(),
+                      course.getInstructor().getUser().getId(),
                       course.getInstructor().getUser().getFullname(),
                       course.getCategory().getName(),
                       course.getPrice(),
@@ -153,34 +153,50 @@ public class CourseService implements ICourseService {
   }
 
   @SneakyThrows
-  public CourseResponseDto getCourse(Long id) {
+  public CourseResponseDto getCourse(Long id, CustomUserDetails userDetails) {
     Course course =
         courseRepository
             .findById(id)
             .orElseThrow(
                 () -> new NoSuchElementException("Course with id " + id + " is not found"));
 
-    // Lấy tất cả bài học gốc (entity)
-    List<Lesson> lessonEntities = lessonRepository.findByCourse_Id(course.getId());
+    // ===== Access control theo role + ownership =====
+    // Guest không vào được vì @PreAuthorize đã chặn (chỉ có Student/Instructor/Admin)
+    UserRole role = userDetails.getUser().getRole();
+    Long viewerUserId = userDetails.getUserId();
 
-    // Lấy thông tin student hiện tại
-    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-    Long studentId = null;
-    if (authentication != null
-        && authentication.getPrincipal() instanceof CustomUserDetails customUserDetails) {
-      boolean isStudent =
-          customUserDetails.getAuthorities().stream()
-              .anyMatch(auth -> auth.getAuthority().equals("ROLE_Student"));
-      if (isStudent) {
-        Long userId = customUserDetails.getUserId();
-        Optional<Student> student = studentRepository.findByUserId(userId);
-        if (student.isPresent()) {
-          studentId = student.get().getId();
-        }
+    String status = course.getStatus(); // "APPROVED" | "PENDING" | "REJECTED"
+
+    // lấy owner userId của instructor
+    Long ownerUserId =
+        course.getInstructor() != null && course.getInstructor().getUser() != null
+            ? course.getInstructor().getUser().getId()
+            : null;
+
+    boolean isApproved = "APPROVED".equalsIgnoreCase(status);
+    boolean isAdmin = role == UserRole.Admin;
+    boolean isOwnerInstructor =
+        (role == UserRole.Instructor) && ownerUserId != null && ownerUserId.equals(viewerUserId);
+
+    if (!isApproved) {
+      if (!(isAdmin || isOwnerInstructor)) {
+        // Không tiết lộ existence -> NotFound là hợp lý
+        throw new NoSuchElementException("Course with id " + id + " is not found");
+        // hoặc bạn muốn rõ ràng: throw new AccessDeniedException("Not allowed");
       }
     }
 
-    // Map từng lesson và đánh dấu completed cho từng lesson
+    // ===== Từ đây trở xuống giữ nguyên logic hiện tại của bạn =====
+
+    List<Lesson> lessonEntities = lessonRepository.findByCourse_Id(course.getId());
+
+    // chỉ student mới cần completed flag
+    Long studentId = null;
+    if (role == UserRole.Student) {
+      Optional<Student> student = studentRepository.findByUserId(viewerUserId);
+      if (student.isPresent()) studentId = student.get().getId();
+    }
+
     List<LessonResponseDto> lessonList = new ArrayList<>();
     for (Lesson lesson : lessonEntities) {
       LessonResponseDto dto = lessonMapper.toDto(lesson);
@@ -189,23 +205,22 @@ public class CourseService implements ICourseService {
             lessonCompletionRepository.existsByStudentIdAndLessonIdAndStatus(
                 studentId, lesson.getId(), LessonProgressStatus.COMPLETED);
         dto.setCompleted(isCompleted);
-
       } else {
         dto.setCompleted(false);
       }
       lessonList.add(dto);
     }
 
-    // Tính tổng số bài học và số đã hoàn thành
     int totalLessons = lessonEntities.size();
     int completedLessons = (int) lessonList.stream().filter(LessonResponseDto::isCompleted).count();
 
-    // Lấy rating trung bình (nếu không có thì trả về 0.0)
     Double avgRating = reviewRepository.avgRatingByCourseId(course.getId());
     if (avgRating == null) avgRating = 0.0;
 
+    // QUAN TRỌNG: nên trả thêm instructorUserId cho FE (xem phần B)
     return new CourseResponseDto(
         course.getId(),
+        course.getInstructor().getUser().getId(),
         course.getInstructor().getUser().getFullname(),
         course.getCategory().getName(),
         course.getPrice(),
@@ -219,8 +234,7 @@ public class CourseService implements ICourseService {
         lessonList,
         completedLessons,
         totalLessons,
-        avgRating // truyền rating cuối cùng
-        );
+        avgRating);
   }
 
   @Override
@@ -292,21 +306,31 @@ public class CourseService implements ICourseService {
     };
   }
 
+  @Transactional
   @Override
-  public CourseResponseDto updateCourseStatus(Long courseId, String status) {
+  public CourseResponseDto updateCourseStatus(Long courseId, String status, String rejectedReason) {
     Course course =
         courseRepository
             .findById(courseId)
             .orElseThrow(
                 () -> new IllegalArgumentException("Course not found with id: " + courseId));
 
-    // giữ trạng thái cũ
     String oldStatus = course.getStatus();
+    String newStatus;
 
     if ("APPROVED".equalsIgnoreCase(status)) {
-      course.setStatus("APPROVED");
+      newStatus = "APPROVED";
+      course.setStatus(newStatus);
+      course.setRejectedReason(null); // approved thì xoá reason
     } else if ("REJECTED".equalsIgnoreCase(status)) {
-      course.setStatus("REJECTED");
+      newStatus = "REJECTED";
+      course.setStatus(newStatus);
+
+      // reject thì phải có lý do (nếu bạn muốn bắt buộc)
+      if (rejectedReason == null || rejectedReason.isBlank()) {
+        throw new IllegalArgumentException("rejectedReason is required when status=REJECTED");
+      }
+      course.setRejectedReason(rejectedReason.trim());
     } else {
       throw new IllegalArgumentException(
           "Invalid status value: " + status + " (must be either 'APPROVED' or 'REJECTED')");
@@ -314,18 +338,58 @@ public class CourseService implements ICourseService {
 
     courseRepository.save(course);
 
-    // publish cho Instructor (kết quả duyệt)
-    Long instructorId = course.getInstructor() != null ? course.getInstructor().getId() : null;
-    if (instructorId != null) {
+    // ===== Publish cho Instructor (kết quả duyệt) =====
+    Long instructorUserId =
+        course.getInstructor() != null && course.getInstructor().getUser() != null
+            ? course.getInstructor().getUser().getId()
+            : null;
+
+    if (instructorUserId != null) {
       publisher.publishEvent(
           new InstructorEvents.CourseReviewOutcomeEvent(
-              course.getId(), instructorId, course.getStatus()));
+              course.getId(), instructorUserId, newStatus));
     }
 
-    // publish cho Student (khoá đổi trạng thái)
+    // ===== Publish cho Student (khoá đổi trạng thái) =====
     publisher.publishEvent(
         new StudentEvents.CourseStatusChangedEvent(
-            course.getId(), oldStatus == null ? "UNKNOWN" : oldStatus, course.getStatus()));
+            course.getId(), oldStatus == null ? "UNKNOWN" : oldStatus, newStatus));
+
+    return courseMapper.toResponseDTO(course);
+  }
+
+  @Transactional
+  @Override
+  public CourseResponseDto resubmitCourse(Long courseId, Long instructorUserId) {
+    Course course =
+        courseRepository
+            .findById(courseId)
+            .orElseThrow(
+                () -> new IllegalArgumentException("Course not found with id: " + courseId));
+
+    // ownership check
+    Long ownerUserId =
+        course.getInstructor() != null && course.getInstructor().getUser() != null
+            ? course.getInstructor().getUser().getId()
+            : null;
+
+    if (ownerUserId == null || !ownerUserId.equals(instructorUserId)) {
+      throw new org.springframework.security.access.AccessDeniedException(
+          "You can't resubmit others' course.");
+    }
+
+    if (!"REJECTED".equalsIgnoreCase(course.getStatus())) {
+      throw new IllegalArgumentException("Only rejected course can be resubmitted.");
+    }
+
+    course.setStatus("PENDING");
+    course.setRejectedReason(null);
+    courseRepository.save(course);
+
+    // notify Admin: course submitted for review
+    publisher.publishEvent(
+        new com.example.learning_management_system_api.events.AdminEvents
+            .CourseSubmittedForReviewEvent(course.getId(), instructorUserId));
 
     return courseMapper.toResponseDTO(course);
   }
